@@ -92,3 +92,11 @@ fn strings_are_jass_and_values_are_tokens() {
     // A string's escapes.
     assert!(from_text("[wtg]\n[trigger]\nname=\"a\\q\"\n", None).errors[0].message.contains("escapes"));
 }
+
+#[test]
+fn categories_by_index() {
+    let doc = parse_bni("[wtg]\n[category]\nindex=38\nname=\"A \\\"b\\\"\"\n[category]\nname=\"no index\"\n");
+    assert_eq!(categories(&doc), [(38, "A \"b\"".to_string())]);
+    assert_eq!(read_string(" \"x\\ny\" "), Some("x\ny".into()));
+    assert_eq!(read_string("\"x\" y"), None);
+}

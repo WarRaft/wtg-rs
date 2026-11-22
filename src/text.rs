@@ -588,6 +588,28 @@ pub fn parse_bni(text: &str) -> Document {
     bni_rs::parse_with(text, &|_| true)
 }
 
+/// A JASS string's text (`"a \"b\""`), the whole of `raw` but spaces
+/// around it; `None` when it isn't one.
+pub fn read_string(raw: &str) -> Option<String> {
+    let mut v = Value { chars: raw.chars().collect(), at: 0, v7: true, data: None, toks: Vec::new() };
+    let s = v.string().ok()?;
+    v.end().ok()?;
+    Some(s)
+}
+
+/// The categories of the text form `doc` (as [`parse_bni`] reads it):
+/// index and name, in order.
+pub fn categories(doc: &Document) -> Vec<(i32, String)> {
+    let mut out = Vec::new();
+    for s in doc.sections.iter().filter(|s| s.name.text == "category") {
+        let get = |k: &str| s.items.iter().find(|i| i.key.as_ref().is_some_and(|n| n.text.trim() == k)).map(|i| i.value_text());
+        if let Some(index) = get("index").and_then(|v| v.trim().parse().ok()) {
+            out.push((index, get("name").and_then(|n| read_string(&n)).unwrap_or_default()));
+        }
+    }
+    out
+}
+
 /// What to highlight in the text form `src`.
 pub fn semantic_tokens(src: &str) -> Vec<SemanticToken> {
     from_text(src, None).tokens
