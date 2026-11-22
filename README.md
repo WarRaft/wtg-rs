@@ -65,7 +65,10 @@ text form yet.
 
 `text::to_text` and `text::from_text`. BNI: `[wtg]` (the versions), then
 a section per category, variable and trigger; a trigger's ECAs are lines
-of calls:
+of calls. A value is the rest of its line as it is (BNI's quotes and
+commas mean nothing in it: `bni_rs::parse_with`), and
+`text::semantic_tokens` highlights it by what it is: functions,
+variables, strings, presets, numbers:
 
 ```ini
 [wtg]
@@ -97,8 +100,9 @@ action=IfThenElseMultiple()
 - The key: `event`, `condition` or `action`, after `!` when disabled;
   inside another after a `>` per level, with `:` and its block.
 - Parameters: `Name(...)` a call (`event:`, `condition:`, `action:`
-  before it for those), `$name` a variable, `"text"` a string (BNI's:
-  `"a"\n"b"`), a bare word a preset, `[index]` an array's index,
+  before it for those), `$name` a variable, `"text"` a string (as JASS
+  writes one: `\"`, `\\`, `\n`, `\r`, `\t`; names and descriptions
+  too), a bare word a preset, `[index]` an array's index,
   `~"value"` the value under a call when it isn't the call's name,
   `#n"value"` a parameter of kind `n`.
 - Flags only when they aren't the default (`enabled=1`; `comment`,

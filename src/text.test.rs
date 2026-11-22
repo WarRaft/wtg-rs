@@ -13,7 +13,7 @@ fn text_reads_back_to_the_same_file() {
         "[wtg]\nversion=7\ngame=2\n\n[category]\nindex=0\nname=\"Init\"\n\n[category]\nindex=1\nname=\"--\"\ncomment=1\n",
         "[variable]\nname=\"hero\"\ntype=\"unit\"\narray=1\nsize=12\n\n",
         "[variable]\nname=\"n\"\ntype=\"integer\"\nsize=1\ninitial=\"5\"\n",
-        "name=\"Say \"\\u{22}\"hi\"\\u{22}\ndescription=\"line one\"\\n\"line two, with a comma\"\ncategory=0\ninitially_off=1\n",
+        "name=\"Say \\\"hi\\\"\"\ndescription=\"line one\\nline two, with a comma\"\ncategory=0\ninitially_off=1\n",
         "event=MapInitializationEvent()\nevent=TriggerRegisterTimerEventPeriodic(\"2.00\")\naction=IfThenElseMultiple()\n",
         ">condition:0=OperatorCompareInteger(GetUnitLevel(GetTriggerUnit()) ~\"\", OperatorEqualENE, #-1\"\")\n",
         ">action:1=SetVariable($hero[\"1\"], \"x\")\n>!action:2=DoNothing()\n",
@@ -65,4 +65,30 @@ fn errors_in_the_text() {
     assert!(lines("[wtg]\nversion=4\n[category]\ncomment=1\n")[0].1.contains("version 7"));
     // Without the data, names and counts aren't checked.
     assert!(from_text("[wtg]\n[trigger]\ncondition=Nope(\"1\", x)\n", None).file.is_some());
+}
+
+#[test]
+fn strings_are_jass_and_values_are_tokens() {
+    let data = TriggerData::parse("[TriggerActions]\nCustomScriptCode=1,scriptcode\n");
+    let code = "call DestroyEffect(AddSpecialEffect( \"Abilities\\\\Spells\\\\Human\\\\x.mdl\", 0, 0))";
+    let text = format!("[wtg]\n[trigger]\nname=\"T\"\n>action:1=CustomScriptCode({})\n", jass_string(code));
+    assert!(text.contains(r#"CustomScriptCode("call DestroyEffect(AddSpecialEffect( \"Abilities\\\\Spells"#), "{text}");
+    let p = from_text(&text.replace(">action:1", "action"), Some(&data));
+    assert_eq!(p.errors, []);
+    let t = &p.file.unwrap().triggers[0];
+    assert_eq!(t.ecas[0].params[0].value, code);
+
+    let toks: Vec<(usize, usize, usize, T)> = semantic_tokens("[wtg]\n[trigger]\n>!action:1=F($v[\"1\"], P, G() ~\"x\") // c\n")
+        .into_iter()
+        .map(|t| (t.line, t.start_col, t.end_col, t.ty))
+        .collect();
+    assert_eq!(&toks[..2], [(1, 2, 5, T::Namespace), (2, 2, 9, T::Namespace)]);
+    assert_eq!(&toks[2..], [
+        (3, 1, 3, T::Operator), (3, 3, 9, T::Keyword), (3, 9, 10, T::Operator), (3, 10, 11, T::Number),
+        (3, 12, 13, T::Function), (3, 14, 16, T::Variable), (3, 17, 20, T::String),
+        (3, 23, 24, T::EnumMember), (3, 26, 27, T::Function), (3, 30, 31, T::Operator), (3, 31, 34, T::String),
+        (3, 36, 40, T::Comment),
+    ]);
+    // A string's escapes.
+    assert!(from_text("[wtg]\n[trigger]\nname=\"a\\q\"\n", None).errors[0].message.contains("escapes"));
 }

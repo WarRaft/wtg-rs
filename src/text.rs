@@ -40,7 +40,8 @@
 //! **Parameters.** `Name(...)` a call (of a function returning a value;
 //! `event:`, `condition:` or `action:` before it for one of those: an
 //! `And` of conditions, an action run by another), `$name` a variable,
-//! `"text"` a string ([`bni_rs::string`]: `"a"\n"b"`), a bare word a
+//! `"text"` a string (as JASS writes one: `\"`, `\\`, `\n`, `\r`,
+//! `\t`; every string of the text is one, a name's too), a bare word a
 //! preset (`PlayerALL`, `OperatorEqual`); `[index]` after any of them an
 //! array's index. World Editor leaves the name of what a parameter was
 //! before it became a call in it; when that isn't the call's name, it
@@ -53,13 +54,18 @@
 //! category's `comment=0`. `initial` is there when the variable has an
 //! initial value, even an empty one.
 //!
+//! A value is the rest of its line as it is (`bni_rs::parse_with`):
+//! BNI's quotes and commas mean nothing in it, and [`semantic_tokens`]
+//! highlights it by what it is (a function, a variable, a string, a
+//! preset, a number).
+//!
 //! Reading the text needs no `TriggerData.txt`; given one, [`from_text`]
 //! also checks every function's name and parameter count against it, as
 //! the file can't be read back without.
 
 use bni_rs::Document;
 use bni_rs::ast::{Item, Section};
-use bni_rs::string::quote;
+use parser_rs::{Modifiers, SemanticToken, SemanticType as T};
 use parser_rs::{ParseError, Span};
 
 use crate::{Call, Category, Eca, FunctionKind, Param, Trigger, TriggerData, Triggers, Variable};
@@ -76,6 +82,22 @@ fn ident(s: &str) -> bool {
 }
 
 // ---------------------------------------------------------------- writing
+
+/// `s` as a JASS string: in quotes, with `\"`, `\\`, `\n`, `\r`, `\t`.
+pub fn jass_string(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out += "\\\"",
+            '\\' => out += "\\\\",
+            '\n' => out += "\\n",
+            '\r' => out += "\\r",
+            '\t' => out += "\\t",
+            c => out.push(c),
+        }
+    }
+    out + "\""
+}
 
 fn name(s: &str) -> Result<&str, String> {
     if ident(s) { Ok(s) } else { Err(format!("the function name {s:?} isn't a word")) }
@@ -98,7 +120,7 @@ fn param(p: &Param) -> Result<String, String> {
             };
             let mut s = format!("{prefix}{}({})", name(&c.name)?, args(&c.params)?);
             if p.value != c.name {
-                s += &format!(" ~{}", quote(&p.value));
+                s += &format!(" ~{}", jass_string(&p.value));
             }
             s
         }
@@ -106,8 +128,8 @@ fn param(p: &Param) -> Result<String, String> {
         (_, None) if p.has_call != 0 => return Err(format!("{:?}: a parameter says it has a call and has none", p.value)),
         (0, None) if ident(&p.value) => p.value.clone(),
         (1, None) if ident(&p.value) => format!("${}", p.value),
-        (3, None) => quote(&p.value),
-        (k, None) => format!("#{}{}", k as i32, quote(&p.value)),
+        (3, None) => jass_string(&p.value),
+        (k, None) => format!("#{}{}", k as i32, jass_string(&p.value)),
     };
     if p.after_call.is_some_and(|n| n != 0) {
         return Err(format!("{:?}: {} after its call", p.value, p.after_call.unwrap_or(0)));
@@ -142,13 +164,13 @@ pub fn to_text(f: &Triggers) -> Result<String, String> {
     let v7 = f.version == 7;
     let mut out = format!("[{HEADER}]\nversion={}\ngame={}\n", f.version, f.game);
     for c in &f.categories {
-        out += &format!("\n[category]\nindex={}\nname={}\n", c.index, quote(&c.name));
+        out += &format!("\n[category]\nindex={}\nname={}\n", c.index, jass_string(&c.name));
         if c.is_comment != 0 {
             out += &format!("comment={}\n", c.is_comment);
         }
     }
     for v in &f.variables {
-        out += &format!("\n[variable]\nname={}\ntype={}\n", quote(&v.name), quote(&v.kind));
+        out += &format!("\n[variable]\nname={}\ntype={}\n", jass_string(&v.name), jass_string(&v.kind));
         if v.unknown != 1 {
             out += &format!("unknown={}\n", v.unknown);
         }
@@ -160,12 +182,12 @@ pub fn to_text(f: &Triggers) -> Result<String, String> {
         }
         match v.has_initial {
             0 if v.initial.is_empty() => {}
-            1 => out += &format!("initial={}\n", quote(&v.initial)),
+            1 => out += &format!("initial={}\n", jass_string(&v.initial)),
             n => return Err(format!("variable {}: an initial value stored as {n}, {:?}", v.name, v.initial)),
         }
     }
     for t in &f.triggers {
-        out += &format!("\n[trigger]\nname={}\ndescription={}\ncategory={}\n", quote(&t.name), quote(&t.description), t.category);
+        out += &format!("\n[trigger]\nname={}\ndescription={}\ncategory={}\n", jass_string(&t.name), jass_string(&t.description), t.category);
         for (key, v, default) in [
             ("comment", t.is_comment, 0),
             ("enabled", t.enabled, 1),
@@ -197,6 +219,9 @@ pub fn is_trigger_text(doc: &Document) -> bool {
 pub struct Parsed {
     pub file: Option<Triggers>,
     pub errors: Vec<ParseError>,
+    /// What to highlight: sections, keys, and in the values the calls'
+    /// names, variables, strings, presets and numbers.
+    pub tokens: Vec<SemanticToken>,
 }
 
 /// A value: what follows `=` on its line, read by hand (the calls'
@@ -206,11 +231,19 @@ struct Value<'a> {
     at: usize,
     v7: bool,
     data: Option<&'a TriggerData>,
+    /// Tokens read: start and end (in `chars`) and type.
+    toks: Vec<(usize, usize, T)>,
 }
 
 type R<T> = Result<T, String>;
 
 impl Value<'_> {
+    fn tok(&mut self, from: usize, to: usize, ty: T) {
+        if to > from {
+            self.toks.push((from, to, ty));
+        }
+    }
+
     fn ws(&mut self) {
         while self.chars.get(self.at).is_some_and(|c| c.is_whitespace()) {
             self.at += 1;
@@ -246,7 +279,10 @@ impl Value<'_> {
     fn end(&mut self) -> R<()> {
         match self.peek() {
             None => Ok(()),
-            Some('/') if self.chars.get(self.at + 1) == Some(&'/') => Ok(()),
+            Some('/') if self.chars.get(self.at + 1) == Some(&'/') => {
+                self.tok(self.at, self.chars.len(), T::Comment);
+                Ok(())
+            }
             Some(_) => Err(format!("nothing more expected{}", self.here())),
         }
     }
@@ -262,7 +298,7 @@ impl Value<'_> {
     }
 
     fn here_at(&self, at: usize) -> String {
-        Value { chars: self.chars.clone(), at, v7: self.v7, data: None }.here()
+        Value { chars: self.chars.clone(), at, v7: self.v7, data: None, toks: Vec::new() }.here()
     }
 
     fn int(&mut self) -> R<i64> {
@@ -274,55 +310,42 @@ impl Value<'_> {
         while self.chars.get(self.at).is_some_and(|c| c.is_ascii_digit()) {
             self.at += 1;
         }
-        self.chars[start..self.at].iter().collect::<String>().parse().map_err(|_| format!("a whole number expected{}", self.here_at(start)))
+        let n = self.chars[start..self.at].iter().collect::<String>().parse().map_err(|_| format!("a whole number expected{}", self.here_at(start)))?;
+        self.tok(start, self.at, T::Number);
+        Ok(n)
     }
 
-    /// A string: quoted parts and escapes between them, as
-    /// [`bni_rs::string::quote`] writes.
+    /// A JASS string: in quotes, with `\"`, `\\`, `\n`, `\r`, `\t`.
     fn string(&mut self) -> R<String> {
         if self.peek() != Some('"') {
             return Err(format!("a string in quotes expected{}", self.here()));
         }
+        let start = self.at;
+        self.at += 1;
         let mut out = String::new();
         loop {
             match self.chars.get(self.at) {
                 Some('"') => {
                     self.at += 1;
-                    loop {
-                        match self.chars.get(self.at) {
-                            Some('"') => break,
-                            Some(c) => out.push(*c),
-                            None => return Err("a string without its closing `\"`".into()),
-                        }
-                        self.at += 1;
-                    }
-                    self.at += 1;
+                    self.tok(start, self.at, T::String);
+                    return Ok(out);
                 }
                 Some('\\') => {
-                    let c = match self.chars.get(self.at + 1) {
+                    out.push(match self.chars.get(self.at + 1) {
+                        Some('"') => '"',
+                        Some('\\') => '\\',
                         Some('n') => '\n',
                         Some('r') => '\r',
                         Some('t') => '\t',
-                        Some('u') if self.chars.get(self.at + 2) == Some(&'{') => {
-                            let close = self.chars[self.at..].iter().position(|c| *c == '}').map(|p| p + self.at);
-                            let code = close.and_then(|e| {
-                                u32::from_str_radix(&self.chars[self.at + 3..e].iter().collect::<String>(), 16).ok()
-                            });
-                            match (close, code.and_then(char::from_u32)) {
-                                (Some(e), Some(c)) => {
-                                    out.push(c);
-                                    self.at = e + 1;
-                                    continue;
-                                }
-                                _ => return Err("`\\u{...}` holds a character's hex code".into()),
-                            }
-                        }
-                        _ => return Err("the escapes between quoted parts are \\n \\r \\t \\u{...}".into()),
-                    };
-                    out.push(c);
+                        _ => return Err(format!("the escapes in a string are \\\" \\\\ \\n \\r \\t{}", self.here())),
+                    });
                     self.at += 2;
                 }
-                _ => return Ok(out),
+                Some(c) => {
+                    out.push(*c);
+                    self.at += 1;
+                }
+                None => return Err("a string without its closing `\"`".into()),
             }
         }
     }
@@ -357,36 +380,54 @@ impl Value<'_> {
         match self.peek() {
             Some('"') => (p.kind, p.value) = (3, self.string()?),
             Some('$') => {
+                let start = self.at;
                 self.at += 1;
                 (p.kind, p.value) = (1, self.word()?);
+                self.tok(start, self.at, T::Variable);
             }
             Some('#') => {
+                let start = self.at;
                 self.at += 1;
                 p.kind = self.int()? as u32;
+                self.toks.pop();
+                self.tok(start, self.at, T::Number);
                 p.value = self.string()?;
             }
             Some(c) if c.is_ascii_alphabetic() || c == '_' => {
+                let mut start = self.at;
                 let mut word = self.word()?;
                 let mut kind = 3;
                 if self.chars.get(self.at) == Some(&':') {
                     let Some(k) = KINDS.iter().position(|k| *k == word) else {
                         return Err(format!("`{word}:`: before a call go event:, condition: and action:"));
                     };
+                    self.tok(start, self.at, T::Keyword);
+                    self.tok(self.at, self.at + 1, T::Operator);
                     self.at += 1;
                     kind = k as u32;
+                    start = self.at;
                     word = self.word()?;
                 }
+                let end = self.at;
                 if self.peek() == Some('(') {
+                    self.tok(start, end, T::Function);
                     let params = self.args()?;
                     self.count(FunctionKind::of(kind).unwrap_or(FunctionKind::Call), &word, params.len())?;
                     p.kind = 2;
                     p.has_call = 1;
-                    p.value = if self.eat('~') { self.string()? } else { word.clone() };
+                    p.value = if self.peek() == Some('~') {
+                        self.tok(self.at, self.at + 1, T::Operator);
+                        self.at += 1;
+                        self.string()?
+                    } else {
+                        word.clone()
+                    };
                     p.call = Some(Call { kind, name: word, has_params: 1, params });
                     p.after_call = self.v7.then_some(0);
                 } else if kind != 3 {
                     return Err(format!("`{}:{word}` is a call: `(` and its parameters", KINDS[kind as usize]));
                 } else {
+                    self.tok(start, end, T::EnumMember);
                     p.value = word;
                 }
             }
@@ -426,6 +467,7 @@ fn eca_key(key: &str) -> Option<(usize, u32, u32, Option<u32>)> {
 struct Reader<'a> {
     lines: Vec<&'a str>,
     errors: Vec<ParseError>,
+    tokens: Vec<SemanticToken>,
     v7: bool,
     data: Option<&'a TriggerData>,
 }
@@ -435,17 +477,23 @@ impl<'a> Reader<'a> {
         self.errors.push(error(item_span(item), message));
     }
 
-    fn value(&self, item: &Item) -> Value<'a> {
+    /// The item's value, and the column its first character is at.
+    fn value(&self, item: &Item) -> (Value<'a>, usize) {
         let line = self.lines.get(item.line.wrapping_sub(1)).copied().unwrap_or("");
-        let raw = line.split_once('=').map_or("", |(_, v)| v);
-        Value { chars: raw.chars().collect(), at: 0, v7: self.v7, data: self.data }
+        let (key, raw) = line.split_once('=').unwrap_or(("", ""));
+        let v = Value { chars: raw.chars().collect(), at: 0, v7: self.v7, data: self.data, toks: Vec::new() };
+        (v, key.chars().count() + 2)
     }
 
     /// Reads the item's value with `read`, which must read all of it.
-    fn read<T>(&mut self, item: &Item, read: impl FnOnce(&mut Value) -> R<T>) -> Option<T> {
-        let mut v = self.value(item);
+    fn read<X>(&mut self, item: &Item, read: impl FnOnce(&mut Value) -> R<X>) -> Option<X> {
+        let (mut v, col) = self.value(item);
         let key = item.key.as_ref().map_or(String::new(), |k| k.text.trim().to_string());
-        match read(&mut v).and_then(|t| v.end().map(|_| t)) {
+        let result = read(&mut v).and_then(|t| v.end().map(|_| t));
+        for &(from, to, ty) in &v.toks {
+            self.tokens.push(SemanticToken::new(item.line, col + from, col + to, ty, Modifiers::NONE));
+        }
+        match result {
             Ok(t) => Some(t),
             Err(m) => {
                 self.err(item, format!("`{key}`: {m}"));
@@ -454,9 +502,9 @@ impl<'a> Reader<'a> {
         }
     }
 
-    fn int<T: TryFrom<i64>>(&mut self, item: &Item) -> Option<T> {
+    fn int<X: TryFrom<i64>>(&mut self, item: &Item) -> Option<X> {
         let n = self.read(item, |v| v.int())?;
-        let t = T::try_from(n).ok();
+        let t = X::try_from(n).ok();
         if t.is_none() {
             self.err(item, format!("{n} is out of range"));
         }
@@ -477,6 +525,10 @@ impl<'a> Reader<'a> {
                 self.err(item, "a field without a name");
                 continue;
             };
+            if let Some(k) = &item.key {
+                let lead = k.text.chars().take_while(|c| c.is_whitespace()).count();
+                self.key_tokens(item.line, k.span.start_col + lead, &key);
+            }
             if scalars.contains(&key.as_str()) {
                 if seen.contains(&key) {
                     self.err(item, format!("`{key}` is set twice"));
@@ -487,6 +539,29 @@ impl<'a> Reader<'a> {
             out.push((key, item));
         }
         out
+    }
+
+    /// A key's tokens: a field's name, or an ECA line's `>`s, `!`, kind
+    /// and block.
+    fn key_tokens(&mut self, line: usize, col: usize, key: &str) {
+        let mut push = |from: usize, to: usize, ty: T| {
+            if to > from {
+                self.tokens.push(SemanticToken::new(line, col + from, col + to, ty, Modifiers::NONE));
+            }
+        };
+        if eca_key(key).is_none() {
+            push(0, key.chars().count(), T::Property);
+            return;
+        }
+        let marks = key.chars().take_while(|c| *c == '>' || *c == '!').count();
+        push(0, marks, T::Operator);
+        let rest = &key[marks..];
+        let kind_len = rest.find(':').unwrap_or(rest.len());
+        push(marks, marks + kind_len, T::Keyword);
+        if kind_len < rest.len() {
+            push(marks + kind_len, marks + kind_len + 1, T::Operator);
+            push(marks + kind_len + 1, marks + rest.chars().count(), T::Number);
+        }
     }
 
     fn unknown(&mut self, item: &Item, key: &str, section: &str, known: &[&str]) {
@@ -504,12 +579,32 @@ impl<'a> Reader<'a> {
 /// Reads the text form back; with `data`, checks every function against
 /// it too.
 pub fn from_text(text: &str, data: Option<&TriggerData>) -> Parsed {
-    from_bni(&bni_rs::parse(text), text, data)
+    from_bni(&parse_bni(text), text, data)
+}
+
+/// The text form as BNI: sections and keys, each value the rest of its
+/// line as it is (`bni_rs::parse_with`), for [`from_bni`].
+pub fn parse_bni(text: &str) -> Document {
+    bni_rs::parse_with(text, &|_| true)
+}
+
+/// What to highlight in the text form `src`.
+pub fn semantic_tokens(src: &str) -> Vec<SemanticToken> {
+    from_text(src, None).tokens
+}
+
+/// [`semantic_tokens`] in the editor's wire format.
+pub fn encoded_semantic_tokens(src: &str) -> Vec<u32> {
+    parser_rs::semantic::encode(semantic_tokens(src), src)
 }
 
 /// [`from_text`] of a document already parsed from `text`.
 pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parsed {
-    let mut r = Reader { lines: text.lines().collect(), errors: doc.errors.clone(), v7: true, data };
+    let mut r = Reader { lines: text.lines().collect(), errors: doc.errors.clone(), tokens: Vec::new(), v7: true, data };
+    for s in &doc.sections {
+        let n = s.name.span;
+        r.tokens.push(SemanticToken::new(n.start_line, n.start_col, n.end_col, T::Namespace, Modifiers::NONE));
+    }
     let mut file = Triggers { version: 7, categories: Vec::new(), game: 2, variables: Vec::new(), triggers: Vec::new() };
     for item in &doc.preamble {
         r.err(item, format!("a field outside a section: the file starts with [{HEADER}]"));
@@ -610,6 +705,16 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
                                 ));
                                 continue;
                             };
+                            // The call first: its tokens show whatever the line's
+                            // place.
+                            let read = r.read(item, |v| {
+                                let start = v.peek().map(|_| v.at).unwrap_or(v.at);
+                                let name = v.word()?;
+                                v.tok(start, v.at, T::Function);
+                                let params = v.args()?;
+                                v.count(FunctionKind::of(kind).unwrap_or(FunctionKind::Action), &name, params.len())?;
+                                Ok((name, params))
+                            });
                             if depth > path.len() {
                                 r.err(item, format!("{} `>` here: the line before is at {} levels", depth, path.len()));
                                 continue;
@@ -626,12 +731,6 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
                                 r.err(item, "lines inside others are in version 7 (The Frozen Throne)");
                                 continue;
                             }
-                            let read = r.read(item, |v| {
-                                let name = v.word()?;
-                                let params = v.args()?;
-                                v.count(FunctionKind::of(kind).unwrap_or(FunctionKind::Action), &name, params.len())?;
-                                Ok((name, params))
-                            });
                             let Some((name, params)) = read else { continue };
                             path.truncate(depth);
                             let e = Eca { kind, group, name, enabled, params, children: Vec::new() };
@@ -658,7 +757,7 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
 fn finish(mut r: Reader, file: Triggers) -> Parsed {
     r.errors.sort_by_key(|e| (e.line, e.col));
     let file = r.errors.is_empty().then_some(file);
-    Parsed { file, errors: r.errors }
+    Parsed { file, errors: r.errors, tokens: r.tokens }
 }
 
 fn error(span: Span, message: impl Into<String>) -> ParseError {
