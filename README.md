@@ -114,6 +114,12 @@ name and parameter count is checked against it.
 
 ### A trigger of its own
 
+A trigger file of its own is a source of its own, not a form of
+`war3map.wtg`: `to_files` goes from a whole file to such files, and
+nothing goes back. The [wc3-rs](../wc3-rs/README.md) editor builds a
+map's script from them, so their format can grow past what
+`war3map.wtg` holds.
+
 `text::trigger_from_text` and `text::trigger_to_text`: one trigger as a
 file (`.trg` in the [wc3-rs](../wc3-rs) editor), a `[trigger]` section
 as above without `category` (its folder is its category), always of
