@@ -85,39 +85,30 @@ pub struct BlockKind {
     pub key: &'static str,
     /// Its label when the editor's strings don't have the key.
     pub english: &'static str,
-    /// Does it run as a function of its own (a `ForGroupMultiple`'s
-    /// actions, called for each unit), so that a trigger's locals aren't
-    /// seen in it? A `For each Integer` loop's and an if/then/else's
-    /// aren't: they're inside the trigger's function.
-    pub callback: bool,
 }
 
 const IF: [BlockKind; 3] = [
-    BlockKind { group: 0, kind: 1, key: "WESTRING_TRIGSUBFUNC_IFCONDITIONS", english: "If - Conditions", callback: false },
-    BlockKind { group: 1, kind: 2, key: "WESTRING_TRIGSUBFUNC_IFTHENACTIONS", english: "Then - Actions", callback: false },
-    BlockKind { group: 2, kind: 2, key: "WESTRING_TRIGSUBFUNC_IFELSEACTIONS", english: "Else - Actions", callback: false },
+    BlockKind { group: 0, kind: 1, key: "WESTRING_TRIGSUBFUNC_IFCONDITIONS", english: "If - Conditions" },
+    BlockKind { group: 1, kind: 2, key: "WESTRING_TRIGSUBFUNC_IFTHENACTIONS", english: "Then - Actions" },
+    BlockKind { group: 2, kind: 2, key: "WESTRING_TRIGSUBFUNC_IFELSEACTIONS", english: "Else - Actions" },
 ];
 const AND_OR: [BlockKind; 1] =
-    [BlockKind { group: 0, kind: 1, key: "WESTRING_TRIGSUBFUNC_ANDORCONDITIONS", english: "Conditions", callback: false }];
+    [BlockKind { group: 0, kind: 1, key: "WESTRING_TRIGSUBFUNC_ANDORCONDITIONS", english: "Conditions" }];
 const LOOP: [BlockKind; 1] =
-    [BlockKind { group: 0, kind: 2, key: "WESTRING_TRIGSUBFUNC_FORLOOPACTIONS", english: "Loop - Actions", callback: false }];
-const CALLBACK: [BlockKind; 1] =
-    [BlockKind { group: 0, kind: 2, key: "WESTRING_TRIGSUBFUNC_FORLOOPACTIONS", english: "Loop - Actions", callback: true }];
+    [BlockKind { group: 0, kind: 2, key: "WESTRING_TRIGSUBFUNC_FORLOOPACTIONS", english: "Loop - Actions" }];
+
 
 /// The blocks of the function `name` of `kind` (0 event, 1 condition,
 /// 2 action): an if/then/else's three, `AndMultiple`'s and
 /// `OrMultiple`'s conditions, a loop's actions (every other action whose
 /// name ends with `Multiple`, as the editor's are: `ForLoopAMultiple`,
-/// `ForGroupMultiple`, `EnumItemsInRectBJMultiple` ...; all but the `For
-/// each Integer` loops run their actions as a function of their own:
-/// [`BlockKind::callback`]). None for the rest. The editor knows this
-/// itself; its files don't say.
+/// `ForGroupMultiple`, `EnumItemsInRectBJMultiple` ...). None for the
+/// rest. The editor knows this itself; its files don't say.
 pub fn blocks(kind: u32, name: &str) -> &'static [BlockKind] {
     match (kind, name) {
         (2, "IfThenElseMultiple") => &IF,
         (1, "AndMultiple" | "OrMultiple") => &AND_OR,
-        (2, "ForLoopAMultiple" | "ForLoopBMultiple" | "ForLoopVarMultiple") => &LOOP,
-        (2, n) if n.ends_with("Multiple") => &CALLBACK,
+        (2, n) if n.ends_with("Multiple") => &LOOP,
         _ => &[],
     }
 }
@@ -467,8 +458,6 @@ pub struct Block {
     pub group: u32,
     /// What goes in it: 1 conditions, 2 actions.
     pub kind: u32,
-    /// Does it run as a function of its own ([`BlockKind::callback`])?
-    pub callback: bool,
     pub nodes: Vec<Node>,
 }
 
@@ -510,7 +499,7 @@ impl Ui {
         text.extend(self.phrase(f, &e.name, &e.params, ""));
         let mut blocks: Vec<Block> = blocks(e.kind, &e.name)
             .iter()
-            .map(|b| Block { label: self.label(b.key), group: b.group, kind: b.kind, callback: b.callback, nodes: Vec::new() })
+            .map(|b| Block { label: self.label(b.key), group: b.group, kind: b.kind, nodes: Vec::new() })
             .collect();
         for c in &e.children {
             let node = self.node(c, lines, at);
@@ -518,7 +507,7 @@ impl Ui {
             match blocks.iter_mut().find(|b| b.group == group) {
                 Some(b) => b.nodes.push(node),
                 // A block the editor wouldn't have: shown as it is.
-                None => blocks.push(Block { label: format!("Block {group}"), group, kind: c.kind, callback: false, nodes: vec![node] }),
+                None => blocks.push(Block { label: format!("Block {group}"), group, kind: c.kind, nodes: vec![node] }),
             }
         }
         Node {

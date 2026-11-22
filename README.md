@@ -129,9 +129,8 @@ in the order a walk of the tree meets them, for an editor to map what
 it shows back to the text. It may declare variables too, `[variable]`
 sections as in the whole file's text, with a `scope=` of their own
 (`text::Scope`): none for the map's globals, `private` for a global of
-the file, `local` for a local of its trigger's actions (seen in them but
-not in a block that runs as a function of its own:
-`ui::BlockKind::callback`).
+the file, `local` for a local of its trigger's actions (seen in all of
+them, every block inside included).
 
 `text::to_files` splits a whole file into such files, a map's triggers
 kept in folders: a folder per category, a `.trg` per trigger, the

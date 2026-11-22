@@ -789,9 +789,10 @@ pub enum Scope {
     /// that no other file's clashes.
     Private,
     /// A local of its trigger's actions, which are one function
-    /// (`scope=local`): seen in the actions, but not in a block that
-    /// runs as a function of its own (a `ForGroupMultiple`'s, see
-    /// `ui::BlockKind::callback`), nor in the events and conditions.
+    /// (`scope=local`): seen in all of them, every block inside
+    /// included (a build makes a `ForGroupMultiple`'s and the like loops
+    /// of that function, not functions of their own), but not in the
+    /// events and conditions.
     Local,
 }
 
