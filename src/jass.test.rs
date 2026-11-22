@@ -219,15 +219,28 @@ fn variables_as_world_editor_initializes_them() {
         "[variable]\nname=\"u\"\ntype=\"unit\"\nsize=1\n\n",
         "[variable]\nname=\"s\"\ntype=\"string\"\nsize=1\ninitial=\"hi\"\n\n",
         "[variable]\nname=\"a\"\ntype=\"integer\"\narray=1\nsize=3\ninitial=\"7\"\n\n",
-        "[variable]\nname=\"us\"\ntype=\"unit\"\narray=1\nsize=2\n\n",
-        "[variable]\nname=\"e\"\ntype=\"string\"\nsize=1\n",
+        "[variable]\nname=\"e\"\ntype=\"string\"\nsize=1\n\n",
+        "[variable]\nname=\"t\"\ntype=\"trigger\"\narray=1\nsize=1\n\n",
+        "[variable]\nname=\"p\"\ntype=\"player\"\nsize=1\ninitial=\"Player00\"\n",
     ), None);
     assert_eq!(p.errors, []);
-    let data = format!("{DATA}[TriggerTypes]\nunit=0,1,1,WESTRING_TRIGTYPE_unit\n");
+    let data = format!("{DATA}[TriggerTypes]\nunit=0,1,1,WESTRING_TRIGTYPE_unit\ntrigger=0,1,1,WESTRING_TRIGTYPE_trigger\n");
     let ui = Ui::parse(&data, "", &|k| k.to_string());
+    type Seen<'a> = (String, String, Option<u32>, Option<&'a str>, Option<String>);
+    let got: Vec<Seen> = p.variables.iter().map(|d| map_variable(d, &ui)).map(|m| (m.ty, m.name, m.array, m.empty, m.value)).collect();
+    let s = |x: &str| x.to_string();
     assert_eq!(
-        variables(&p.variables, &ui),
-        "integer udg_n = 0\ngroup udg_g = null\nunit udg_u = null\nstring udg_s = \"\"\ninteger array udg_a\nunit array udg_us\nstring udg_e = \"\"\n\nfunction InitGlobals\n    integer i = 0\n    udg_n = 0\n    udg_g = CreateGroup()\n    udg_s = \"hi\"\n    i = 0\n    loop\n        exitwhen (i > 3)\n        udg_a[i] = 7\n        i = i + 1\n    endloop\n    udg_e = \"\"\nendfunction\n"
+        got,
+        [
+            (s("integer"), s("udg_n"), None, Some("0"), Some(s("0"))),
+            (s("group"), s("udg_g"), None, Some("null"), Some(s("CreateGroup()"))),
+            (s("unit"), s("udg_u"), None, Some("null"), None),
+            (s("string"), s("udg_s"), None, Some("\"\""), Some(s("\"hi\""))),
+            (s("integer"), s("udg_a"), Some(3), None, Some(s("7"))),
+            (s("string"), s("udg_e"), None, Some("\"\""), Some(s("\"\""))),
+            (s("trigger"), s("udg_t"), Some(1), None, Some(s("CreateTrigger()"))),
+            (s("player"), s("udg_p"), None, Some("null"), Some(s("Player(0)"))),
+        ]
     );
 }
 

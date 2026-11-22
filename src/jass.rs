@@ -106,19 +106,33 @@ pub fn compile(trigger: Option<&Trigger>, name: &str, own: &[Declared], visible:
     out
 }
 
-/// The map's global variables (`variables`) as World Editor builds them:
-/// each declared at the top level with its type's empty value (`null`, `0`,
-/// `false`, `""`; an array with none), and `InitGlobals`, which the map's
-/// `main` calls after `InitBlizzard`, setting each to its initial value
-/// or its type's default (`CreateGroup()`, `0` ...; a string `""`): an array each of its
-/// cells up to its size (World Editor's loop goes one past it), a
-/// variable of a type without a default and no initial value not at all.
-pub fn variables(variables: &[Declared], ui: &Ui) -> String {
+/// A map's global variable as its script has it (World Editor's way).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapVariable {
+    /// Its JASS type (`integer`, `unit`).
+    pub ty: String,
+    /// Its name in the script (`udg_<name>`).
+    pub name: String,
+    /// An array's size (World Editor's `InitGlobals` sets one more cell).
+    pub array: Option<u32>,
+    /// What it's declared with where the game reads globals: its type's
+    /// empty value (`null`, `0`, `false`, `""`); none for an array.
+    pub empty: Option<&'static str>,
+    /// What `InitGlobals` sets it to (each cell of an array): its initial
+    /// value, else its type's default (`CreateGroup()`, `0`; a string
+    /// `""`), as JASS; none for a type without a default and no initial
+    /// value (a unit).
+    pub value: Option<String>,
+}
+
+/// `d` as the map's script has it ([`MapVariable`]).
+pub fn map_variable(d: &Declared, ui: &Ui) -> MapVariable {
+    let own = std::slice::from_ref(d);
     let c = Compiler {
         ui,
         id: String::new(),
-        own: variables,
-        visible: variables,
+        own,
+        visible: own,
         helpers: Vec::new(),
         temps: Vec::new(),
         globals: Vec::new(),
@@ -126,45 +140,28 @@ pub fn variables(variables: &[Declared], ui: &Ui) -> String {
         loops: Vec::new(),
         script_locals: Vec::new(),
     };
-    let mut out = String::new();
-    let mut init = String::new();
-    let mut looped = false;
-    for d in variables {
-        let v = &d.variable;
-        let ty = c.jass_type(&v.kind);
-        let name = c.var_name(&v.name);
-        if v.is_array != 0 {
-            let _ = writeln!(out, "{ty} array {name}");
-        } else {
-            let empty = match ui.base(&v.kind) {
-                "integer" | "integervar" | "real" => "0",
-                "boolean" => "false",
-                "string" => "\"\"",
-                _ => "null",
-            };
-            let _ = writeln!(out, "{ty} {name} = {empty}");
-        }
-        let value = if v.has_initial != 0 && !v.initial.is_empty() {
-            Some(c.value(&v.initial, &v.kind))
-        } else {
-            // A string without a default is "" (World Editor's).
-            ui.type_defaults.get(&v.kind).cloned().or_else(|| (ui.base(&v.kind) == "string").then(|| "\"\"".to_string()))
-        };
-        let Some(value) = value else { continue };
-        if v.is_array != 0 {
-            looped = true;
-            let _ = writeln!(init, "    i = 0\n    loop\n        exitwhen (i > {})\n        {name}[i] = {value}\n        i = i + 1\n    endloop", v.array_size);
-        } else {
-            let _ = writeln!(init, "    {name} = {value}");
-        }
-    }
-    out += "\nfunction InitGlobals\n";
-    if looped {
-        out += "    integer i = 0\n";
-    }
-    out += &init;
-    out += "endfunction\n";
-    out
+    let v = &d.variable;
+    let base = ui.base(&v.kind);
+    let empty = match base {
+        _ if v.is_array != 0 => None,
+        "integer" | "integervar" | "real" => Some("0"),
+        "boolean" => Some("false"),
+        "string" => Some("\"\""),
+        _ => Some("null"),
+    };
+    let value = if v.has_initial != 0 && !v.initial.is_empty() {
+        // A preset (`UnitNull`) is its code (`null`).
+        Some(ui.presets.get(&v.initial).map_or_else(|| c.value(&v.initial, &v.kind), |p| p.code.clone()))
+    } else {
+        // World Editor's own, past what its data says: a string is "",
+        // a trigger made (seen in a map's war3map.j, in no TriggerData.txt).
+        ui.type_defaults.get(&v.kind).cloned().or_else(|| match base {
+            "string" => Some("\"\"".to_string()),
+            "trigger" => Some("CreateTrigger()".to_string()),
+            _ => None,
+        })
+    };
+    MapVariable { ty: c.jass_type(&v.kind), name: c.var_name(&v.name), array: (v.is_array != 0).then_some(v.array_size), empty, value }
 }
 
 /// The triggers the map runs when it starts (World Editor's
