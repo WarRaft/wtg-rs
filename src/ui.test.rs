@@ -126,7 +126,7 @@ fn a_trigger_as_the_editor_shows_it() {
     let p = trigger_from_text(text, None);
     assert_eq!(p.errors, []);
     assert_eq!(p.lines, [3, 4, 5, 6, 7]);
-    let view = ui.render(&p.trigger, &p.lines);
+    let view = ui.render(p.trigger.as_ref().unwrap(), &p.lines);
     assert_eq!(view.events.len(), 1);
     assert_eq!(flat(&view.events[0].text), "Map initialization");
     assert!(view.conditions.is_empty());

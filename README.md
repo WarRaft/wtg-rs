@@ -120,7 +120,14 @@ as above without `category` (its folder is its category), always of
 version 7. What it reads has the trigger as far as it reads (a line with
 an error is left out, and what's inside it), and the line of each ECA,
 in the order a walk of the tree meets them, for an editor to map what
-it shows back to the text.
+it shows back to the text. It may declare global variables too,
+`[variable]` sections as in the whole file's text.
+
+`text::to_files` splits a whole file into such files, a map's triggers
+kept in folders: a folder per category, a `.trg` per trigger, the
+variables in `_variables.trg` (`text::VARIABLES_FILE`). Names become
+file names on every system (`text::file_name`), and clashes get `(2)`,
+`(3)` ...
 
 ## What the editor shows
 

@@ -170,27 +170,110 @@ pub fn to_text(f: &Triggers) -> Result<String, String> {
         }
     }
     for v in &f.variables {
-        out += &format!("\n[variable]\nname={}\ntype={}\n", jass_string(&v.name), jass_string(&v.kind));
-        if v.unknown != 1 {
-            out += &format!("unknown={}\n", v.unknown);
-        }
-        if v.is_array != 0 {
-            out += &format!("array={}\n", v.is_array);
-        }
-        if v7 {
-            out += &format!("size={}\n", v.array_size);
-        }
-        match v.has_initial {
-            0 if v.initial.is_empty() => {}
-            1 => out += &format!("initial={}\n", jass_string(&v.initial)),
-            n => return Err(format!("variable {}: an initial value stored as {n}, {:?}", v.name, v.initial)),
-        }
+        out += "\n";
+        variable_text(&mut out, v, v7)?;
     }
     for t in &f.triggers {
         out += &format!("\n[{TRIGGER}]\nname={}\ndescription={}\ncategory={}\n", jass_string(&t.name), jass_string(&t.description), t.category);
         trigger_body(&mut out, t)?;
     }
     Ok(out)
+}
+
+// ---------------------------------------------------------------- as files
+
+/// The file of a map's global variables, at the top of its triggers'
+/// folder.
+pub const VARIABLES_FILE: &str = "_variables.trg";
+
+/// `name` as a file or folder name on every system: the characters
+/// Windows refuses (`<>:"/\|?*`, control characters) as `_`, no dot or
+/// space at the end, not a name Windows keeps (`CON`, `COM1` ...), never
+/// empty.
+pub fn file_name(name: &str) -> String {
+    let mut out: String = name.chars().map(|c| if "<>:\"/\\|?*".contains(c) || c.is_control() { '_' } else { c }).collect();
+    while out.ends_with(['.', ' ']) {
+        out.pop();
+    }
+    let out = out.trim_start().to_string();
+    let stem = out.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&stem.as_str())
+        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit());
+    match () {
+        _ if out.is_empty() => "_".into(),
+        _ if reserved => format!("{out}_"),
+        _ => out,
+    }
+}
+
+/// `name`, or `name (2)`, `name (3)` ... when `taken` has it (in any
+/// case); then `taken` has it.
+fn unique(name: String, taken: &mut Vec<String>) -> String {
+    let mut out = name.clone();
+    let mut n = 2;
+    while taken.iter().any(|t| t.eq_ignore_ascii_case(&out)) {
+        out = format!("{name} ({n})");
+        n += 1;
+    }
+    taken.push(out.clone());
+    out
+}
+
+/// The triggers of `f` as files, the way a map is kept as files in
+/// folders: a folder per category (by its name), in it a `.trg` per
+/// trigger (by its name), and the global variables in
+/// [`VARIABLES_FILE`] at the top. Each is a path with `/` and its text.
+/// Names that can't be file names are made so ([`file_name`]), and two
+/// that would be the same get `(2)`, `(3)` ...; a trigger whose category
+/// isn't there goes to the top. Fails as [`to_text`] does.
+pub fn to_files(f: &Triggers) -> Result<Files, String> {
+    let mut out = Vec::new();
+    let mut top = vec![VARIABLES_FILE.to_string()];
+    if !f.variables.is_empty() {
+        out.push((VARIABLES_FILE.to_string(), variables_to_text(&f.variables)?));
+    }
+    // Each category's folder, and the names taken in it.
+    let mut folders: Vec<(i32, String, Vec<String>)> = Vec::new();
+    for c in &f.categories {
+        if folders.iter().any(|(i, _, _)| *i == c.index) {
+            continue;
+        }
+        let name = unique(file_name(&c.name), &mut top);
+        folders.push((c.index, name, Vec::new()));
+    }
+    let folder_names = folders.iter().map(|(_, n, _)| n.clone()).collect();
+    for t in &f.triggers {
+        let text = trigger_to_text(t)?;
+        let file = format!("{}.trg", file_name(&t.name));
+        let path = match folders.iter_mut().find(|(i, _, _)| *i == t.category) {
+            Some((_, folder, taken)) => format!("{folder}/{}", unique_file(file, taken)),
+            None => unique_file(file, &mut top),
+        };
+        out.push((path, text));
+    }
+    Ok(Files { folders: folder_names, files: out })
+}
+
+/// What [`to_files`] makes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Files {
+    /// A folder per category, empty ones too, in order.
+    pub folders: Vec<String>,
+    /// Each file's path (with `/`) and text.
+    pub files: Vec<(String, String)>,
+}
+
+/// [`unique`] for a file name: the number before its extension.
+fn unique_file(file: String, taken: &mut Vec<String>) -> String {
+    let stem = file.strip_suffix(".trg").unwrap_or(&file).to_string();
+    let mut out = file.clone();
+    let mut n = 2;
+    while taken.iter().any(|t| t.eq_ignore_ascii_case(&out)) {
+        out = format!("{stem} ({n}).trg");
+        n += 1;
+    }
+    taken.push(out.clone());
+    out
 }
 
 // ---------------------------------------------------------------- reading
@@ -652,32 +735,8 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
                 }
                 file.categories.push(c);
             }
-            "variable" => {
-                const KEYS: [&str; 6] = ["name", "type", "unknown", "array", "size", "initial"];
-                let mut v = Variable {
-                    name: String::new(),
-                    kind: String::new(),
-                    unknown: 1,
-                    is_array: 0,
-                    array_size: 0,
-                    has_initial: 0,
-                    initial: String::new(),
-                };
-                for (key, item) in r.items(section, &KEYS) {
-                    match key.as_str() {
-                        "name" => v.name = r.string(item).unwrap_or_default(),
-                        "type" => v.kind = r.string(item).unwrap_or_default(),
-                        "unknown" => v.unknown = r.int(item).unwrap_or(1),
-                        "array" => v.is_array = r.int(item).unwrap_or(0),
-                        "size" if r.v7_only(item, &key) => v.array_size = r.int(item).unwrap_or(0),
-                        "size" => {}
-                        "initial" => {
-                            v.has_initial = 1;
-                            v.initial = r.string(item).unwrap_or_default();
-                        }
-                        _ => r.unknown(item, &key, "variable", &KEYS),
-                    }
-                }
+            VARIABLE => {
+                let v = read_variable(&mut r, section);
                 file.variables.push(v);
             }
             TRIGGER => {
@@ -691,6 +750,38 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
         }
     }
     finish(r, file)
+}
+
+/// A `[variable]` section.
+pub const VARIABLE: &str = "variable";
+
+fn read_variable<'a>(r: &mut Reader<'a>, section: &'a Section) -> Variable {
+    const KEYS: [&str; 6] = ["name", "type", "unknown", "array", "size", "initial"];
+    let mut v = Variable {
+        name: String::new(),
+        kind: String::new(),
+        unknown: 1,
+        is_array: 0,
+        array_size: 0,
+        has_initial: 0,
+        initial: String::new(),
+    };
+    for (key, item) in r.items(section, &KEYS) {
+        match key.as_str() {
+            "name" => v.name = r.string(item).unwrap_or_default(),
+            "type" => v.kind = r.string(item).unwrap_or_default(),
+            "unknown" => v.unknown = r.int(item).unwrap_or(1),
+            "array" => v.is_array = r.int(item).unwrap_or(0),
+            "size" if r.v7_only(item, &key) => v.array_size = r.int(item).unwrap_or(0),
+            "size" => {}
+            "initial" => {
+                v.has_initial = 1;
+                v.initial = r.string(item).unwrap_or_default();
+            }
+            _ => r.unknown(item, &key, VARIABLE, &KEYS),
+        }
+    }
+    v
 }
 
 /// The fields a `[trigger]` has; a trigger file of its own has them but
@@ -795,8 +886,11 @@ pub const TRIGGER: &str = "trigger";
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedTrigger {
     /// The trigger as far as it reads: a line with an error is left out,
-    /// and what's inside it. Whole when `errors` is empty.
-    pub trigger: Trigger,
+    /// and what's inside it. Whole when `errors` is empty; `None` for a
+    /// file of variables alone.
+    pub trigger: Option<Trigger>,
+    /// The global variables it declares, in order.
+    pub variables: Vec<Variable>,
     /// The line (from 1) of each ECA of `trigger`, in the order a walk of
     /// the tree meets them: an ECA, then what's inside it.
     pub lines: Vec<usize>,
@@ -804,10 +898,12 @@ pub struct ParsedTrigger {
     pub tokens: Vec<SemanticToken>,
 }
 
-/// Reads a trigger file of its own (`.trg`): one `[trigger]` section, as
-/// in the text form of a whole file but without `category` (its folder
-/// is its category), always of version 7 (lines inside others). With
-/// `data`, checks every function against it too.
+/// Reads a trigger file of its own (`.trg`): at most one `[trigger]`
+/// section, as in the text form of a whole file but without `category`
+/// (its folder is its category), and any number of `[variable]`s, the
+/// map's global variables it declares (a file of them alone holds the
+/// map's: `_variables.trg`); always of version 7 (lines inside others).
+/// With `data`, checks every function against it too.
 pub fn trigger_from_text(text: &str, data: Option<&TriggerData>) -> ParsedTrigger {
     let doc = parse_bni(text);
     let mut r = Reader { lines: text.lines().collect(), errors: doc.errors.clone(), tokens: Vec::new(), v7: true, data };
@@ -819,21 +915,29 @@ pub fn trigger_from_text(text: &str, data: Option<&TriggerData>) -> ParsedTrigge
         r.err(item, format!("a field outside a section: a trigger file is one [{TRIGGER}]"));
     }
     let mut read = None;
+    let mut variables = Vec::new();
     for section in &doc.sections {
-        if section.name.text != TRIGGER {
-            r.errors.push(error(section.name.span, format!("no section [{}]: a trigger file is one [{TRIGGER}]", section.name.text)));
-        } else if read.is_some() {
-            r.errors.push(error(section.name.span, format!("a second [{TRIGGER}]: a trigger file is one trigger")));
-        } else {
-            read = Some(read_trigger(&mut r, section, false));
+        match section.name.text.as_str() {
+            VARIABLE => variables.push(read_variable(&mut r, section)),
+            TRIGGER if read.is_some() => {
+                r.errors.push(error(section.name.span, format!("a second [{TRIGGER}]: a trigger file is one trigger")));
+            }
+            TRIGGER => read = Some(read_trigger(&mut r, section, false)),
+            other => r.errors.push(error(
+                section.name.span,
+                format!("no section [{other}]: a trigger file has a [{TRIGGER}] and [{VARIABLE}]s"),
+            )),
         }
     }
     if doc.sections.is_empty() {
-        r.errors.push(error(Span::new(1, 1, 1, 2), format!("a trigger file is one [{TRIGGER}]")));
+        r.errors.push(error(Span::new(1, 1, 1, 2), format!("a trigger file has a [{TRIGGER}] or [{VARIABLE}]s")));
     }
-    let (trigger, lines) = read.unwrap_or_else(|| (Trigger::default(), Vec::new()));
+    let (trigger, lines) = match read {
+        Some((t, l)) => (Some(t), l),
+        None => (None, Vec::new()),
+    };
     r.errors.sort_by_key(|e| (e.line, e.col));
-    ParsedTrigger { trigger, lines, errors: r.errors, tokens: r.tokens }
+    ParsedTrigger { trigger, variables, lines, errors: r.errors, tokens: r.tokens }
 }
 
 /// What to highlight in a trigger file of its own, in the editor's wire
@@ -847,6 +951,39 @@ pub fn encoded_trigger_semantic_tokens(src: &str) -> Vec<u32> {
 pub fn trigger_to_text(t: &Trigger) -> Result<String, String> {
     let mut out = format!("[{TRIGGER}]\nname={}\ndescription={}\n", jass_string(&t.name), jass_string(&t.description));
     trigger_body(&mut out, t)?;
+    Ok(out)
+}
+
+/// A `[variable]` section; `size` in version 7 (`v7`).
+fn variable_text(out: &mut String, v: &Variable, v7: bool) -> Result<(), String> {
+    *out += &format!("[variable]\nname={}\ntype={}\n", jass_string(&v.name), jass_string(&v.kind));
+    if v.unknown != 1 {
+        *out += &format!("unknown={}\n", v.unknown);
+    }
+    if v.is_array != 0 {
+        *out += &format!("array={}\n", v.is_array);
+    }
+    if v7 {
+        *out += &format!("size={}\n", v.array_size);
+    }
+    match v.has_initial {
+        0 if v.initial.is_empty() => {}
+        1 => *out += &format!("initial={}\n", jass_string(&v.initial)),
+        n => return Err(format!("variable {}: an initial value stored as {n}, {:?}", v.name, v.initial)),
+    }
+    Ok(())
+}
+
+/// The text of a file of global variables, `[variable]` sections, as a
+/// trigger file of its own holds them.
+pub fn variables_to_text(variables: &[Variable]) -> Result<String, String> {
+    let mut out = String::new();
+    for (i, v) in variables.iter().enumerate() {
+        if i > 0 {
+            out += "\n";
+        }
+        variable_text(&mut out, v, true)?;
+    }
     Ok(out)
 }
 

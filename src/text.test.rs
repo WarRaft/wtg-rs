@@ -111,7 +111,7 @@ fn a_trigger_file_of_its_own() {
     assert!(!text.contains("category"), "{text}");
     let p = trigger_from_text(&text, Some(&data));
     assert_eq!(p.errors, [], "{text}");
-    assert_eq!(p.trigger, t);
+    assert_eq!(p.trigger, Some(t));
     // Every ECA's line, a parent before what's inside it.
     let ecas: Vec<usize> = text.lines().enumerate().filter(|(_, l)| l.contains('(')).map(|(i, _)| i + 1).collect();
     assert_eq!(p.lines, ecas);
@@ -124,12 +124,62 @@ fn a_trigger_file_of_its_own() {
     assert!(e[0].1.contains("its folder is its category"), "{e:?}");
     assert!(e[1].1.contains("a second [trigger]"), "{e:?}");
     assert!(e[2].1.contains("no section [wtg]"), "{e:?}");
-    assert_eq!(lines("")[0].1, "a trigger file is one [trigger]");
+    assert_eq!(lines("")[0].1, "a trigger file has a [trigger] or [variable]s");
 
     // A line that doesn't read is left out, and what's inside it; the rest
     // is read.
     let p = trigger_from_text("[trigger]\naction=Nope()\n>action:0=DoNothing()\naction=DoNothing()\n", Some(&data));
     assert_eq!(p.errors.len(), 1, "{:?}", p.errors);
-    assert_eq!(p.trigger.ecas.len(), 1);
+    assert_eq!(p.trigger.unwrap().ecas.len(), 1);
     assert_eq!(p.lines, [4]);
+}
+
+#[test]
+fn variables_in_a_trigger_file() {
+    let f = sample();
+    let text = variables_to_text(&f.variables).unwrap();
+    assert!(text.starts_with("[variable]\nname=\"hero\"\ntype=\"unit\"\narray=1\nsize=12\n\n[variable]"), "{text}");
+    let p = trigger_from_text(&text, None);
+    assert_eq!(p.errors, []);
+    assert_eq!((p.trigger, p.variables), (None, f.variables.clone()));
+    // With a trigger, in any order.
+    let both = format!("{text}\n[trigger]\nname=\"T\"\naction=DoNothing()\n");
+    let p = trigger_from_text(&both, None);
+    assert_eq!(p.errors, []);
+    assert_eq!((p.trigger.unwrap().name.as_str(), p.variables.len()), ("T", 2));
+}
+
+#[test]
+fn triggers_as_files() {
+    assert_eq!(file_name("a/b: c?"), "a_b_ c_");
+    assert_eq!(file_name("Init. "), "Init");
+    assert_eq!(file_name("con"), "con_");
+    assert_eq!(file_name("COM1.x"), "COM1.x_");
+    assert_eq!(file_name(""), "_");
+
+    let mut f = sample();
+    f.categories.push(Category { index: 5, name: "init".into(), is_comment: 0 });
+    let mut t = f.triggers[0].clone();
+    t.category = 0;
+    f.triggers.push(t.clone());
+    t.category = 99;
+    t.name = "_variables".into();
+    f.triggers.push(t);
+    let made = to_files(&f).unwrap();
+    assert_eq!(made.folders, ["Init", "--", "init (2)"]);
+    let files = made.files;
+    let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+    assert_eq!(paths, [
+        "_variables.trg",
+        "Init/Say _hi_.trg",
+        "Init/Say _hi_ (2).trg",
+        "_variables (2).trg",
+    ], "{files:#?}");
+    // Every file reads back to what it came from.
+    let p = trigger_from_text(&files[1].1, None);
+    assert_eq!(p.errors, []);
+    let mut back = p.trigger.unwrap();
+    back.category = f.triggers[0].category;
+    assert_eq!(back, f.triggers[0]);
+    assert_eq!(trigger_from_text(&files[0].1, None).variables, f.variables);
 }

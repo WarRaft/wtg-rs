@@ -120,7 +120,8 @@ pub struct Ui {
 }
 
 /// Keys of labels the view shows, with their English.
-const LABELS: [(&str, &str); 8] = [
+const LABELS: [(&str, &str); 9] = [
+    ("WESTRING_VARIABLES", "Variables"),
     ("WESTRING_EVENTS", "Events"),
     ("WESTRING_CONDITIONS", "Conditions"),
     ("WESTRING_ACTIONS", "Actions"),
@@ -237,8 +238,8 @@ impl Ui {
     }
 
     /// The label of a `WESTRING_` key of [`blocks`] or of the view's
-    /// headings (`WESTRING_EVENTS`, `WESTRING_CONDITIONS`,
-    /// `WESTRING_ACTIONS`).
+    /// headings (`WESTRING_VARIABLES`, `WESTRING_EVENTS`,
+    /// `WESTRING_CONDITIONS`, `WESTRING_ACTIONS`).
     pub fn label(&self, key: &str) -> String {
         match self.labels.get(key) {
             Some(l) => l.clone(),
