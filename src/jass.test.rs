@@ -170,3 +170,13 @@ fn trigger_names_as_world_editors() {
     let j = compiled("[trigger]\nname=\"Шляпа\"\naction=DoNothing()\n", &[]);
     assert!(j.contains(&format!("function Trig_{}u_Actions", "_".repeat(10))), "{j}");
 }
+
+#[test]
+fn comments_disabled_and_custom_text_as_world_editor_builds_them() {
+    let j = compiled("[trigger]\nname=\"--- Init ---\"\ncomment=1\n", &[]);
+    assert!(j.contains("// A comment, not a trigger") && !j.contains("function Trig"), "{j}");
+    let j = compiled("[trigger]\nname=\"Off\"\nenabled=0\naction=DoNothing()\n", &[]);
+    assert!(j.contains("// Disabled: gg_trg_Off is declared (null)") && !j.contains("function Trig"), "{j}");
+    let j = compiled("[trigger]\nname=\"Code\"\ncustom_text=1\naction=DoNothing()\n", &[]);
+    assert!(j.contains("its code is in war3map.wct") && !j.contains("function Trig"), "{j}");
+}

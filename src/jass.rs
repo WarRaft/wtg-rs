@@ -19,7 +19,9 @@
 //!   copy of the group, `ForForceMultiple` over the player slots,
 //!   `Enum...Multiple` over what's gathered first), and *Picked unit* and
 //!   the like are the loop's. So a trigger's locals are seen in them.
-//! - What's disabled isn't there; a disabled trigger says so.
+//! - What's disabled isn't there; a disabled trigger, a comment and custom
+//!   text say so, without functions (World Editor declares a disabled one's
+//!   `gg_trg_` and leaves its functions out).
 
 use std::fmt::Write as _;
 
@@ -401,8 +403,21 @@ impl Compiler<'_> {
         for line in t.description.lines() {
             let _ = writeln!(out, "// {line}");
         }
-        if t.enabled == 0 {
-            out += "//\n// Disabled: not in the map's script.\n";
+        // As World Editor builds them: a comment isn't a trigger; a
+        // disabled one's global is declared (null), its functions aren't
+        // there; custom text is its code in war3map.wct.
+        let note = if t.is_comment != 0 {
+            Some("A comment, not a trigger: nothing of it is in the map's script.".to_string())
+        } else if t.enabled == 0 {
+            Some(format!("Disabled: {trig} is declared (null), its functions aren't in the map's script."))
+        } else if t.is_custom != 0 {
+            Some("Custom text (custom_text=1): its code is in war3map.wct, not made of these lines.".to_string())
+        } else {
+            None
+        };
+        if let Some(note) = note {
+            let _ = writeln!(out, "//\n// {note}\n{rule}");
+            return out;
         }
         let _ = writeln!(out, "{rule}");
 

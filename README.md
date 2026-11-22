@@ -152,7 +152,10 @@ their type (`"text"`, `'hfoo'`, `10`). The actions are one function:
 `ForGroupMultiple`, `ForForceMultiple` and `Enum...Multiple` are loops of
 it (a copy of the group emptied with `FirstOfGroup`; the player slots;
 what's gathered first), their responses (`GetEnumUnit` ...) the loop's.
-What's disabled isn't there.
+What's disabled isn't there; a comment (`comment=1`) is no trigger, a
+disabled one's `gg_trg_` is declared and its functions left out, and
+custom text (`custom_text=1`) is its code in `war3map.wct`, as World
+Editor builds them.
 
 A trigger's `<name>` there is World Editor's (`jass::ident`), a function
 of its name alone: each byte (UTF-8) that isn't an ASCII letter, a digit
