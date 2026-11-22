@@ -238,52 +238,57 @@ pub fn file_name(name: &str) -> String {
     }
 }
 
-/// `name`, or `name (2)`, `name (3)` ... when `taken` has it (in any
-/// case); then `taken` has it.
-fn unique(name: String, taken: &mut Vec<String>) -> String {
-    let mut out = name.clone();
-    let mut n = 2;
-    while taken.iter().any(|t| t.eq_ignore_ascii_case(&out)) {
-        out = format!("{name} ({n})");
-        n += 1;
-    }
-    taken.push(out.clone());
-    out
+/// `n` with at least three digits, more when `count` needs them: `007`.
+fn number(n: usize, count: usize) -> String {
+    let width = count.saturating_sub(1).to_string().len().max(3);
+    format!("{n:0width$}")
 }
 
 /// The triggers of `f` as files, the way a map is kept as files in
-/// folders: a folder per category (by its name), in it a `.trg` per
-/// trigger (by its name), and the global variables in
-/// [`VARIABLES_FILE`] at the top. Each is a path with `/` and its text.
-/// Names that can't be file names are made so ([`file_name`]), and two
-/// that would be the same get `(2)`, `(3)` ...; a trigger whose category
-/// isn't there goes to the top. Fails as [`to_text`] does.
+/// folders: a folder per category, in it a `.trg` per trigger, and the
+/// global variables in [`VARIABLES_FILE`] at the top. Each is a path with
+/// `/` and its text. The order is in the names, as the file has it (the
+/// game builds them top to bottom): a category's folder is its number
+/// among the categories and its name, `000_Init`, and a trigger's file
+/// its number in its category and its name, `000_Spawn.trg`; names that
+/// can't be file names are made so ([`file_name`]). Its name stays in its
+/// text. A trigger whose category isn't there goes to the top, numbered
+/// among those. Fails as [`to_text`] does.
 pub fn to_files(f: &Triggers) -> Result<Files, String> {
     let mut out = Vec::new();
-    let mut top = vec![VARIABLES_FILE.to_string()];
     if !f.variables.is_empty() {
         out.push((VARIABLES_FILE.to_string(), variables_to_text(&f.variables)?));
     }
-    // Each category's folder, and the names taken in it.
-    let mut folders: Vec<(i32, String, Vec<String>)> = Vec::new();
+    // Each category once, the first of an index.
+    let mut categories: Vec<&Category> = Vec::new();
     for c in &f.categories {
-        if folders.iter().any(|(i, _, _)| *i == c.index) {
-            continue;
+        if !categories.iter().any(|k| k.index == c.index) {
+            categories.push(c);
         }
-        let name = unique(file_name(&c.name), &mut top);
-        folders.push((c.index, name, Vec::new()));
     }
-    let folder_names = folders.iter().map(|(_, n, _)| n.clone()).collect();
+    let folders: Vec<String> =
+        categories.iter().enumerate().map(|(i, c)| format!("{}_{}", number(i, categories.len()), file_name(&c.name))).collect();
+    let in_folder = |t: &Trigger| categories.iter().position(|c| c.index == t.category);
+    let mut counts = vec![0; folders.len()];
+    let mut top = 0;
+    let top_count = f.triggers.iter().filter(|t| in_folder(t).is_none()).count();
     for t in &f.triggers {
         let text = trigger_to_text(t)?;
-        let file = format!("{}.trg", file_name(&t.name));
-        let path = match folders.iter_mut().find(|(i, _, _)| *i == t.category) {
-            Some((_, folder, taken)) => format!("{folder}/{}", unique_file(file, taken)),
-            None => unique_file(file, &mut top),
+        let path = match in_folder(t) {
+            Some(k) => {
+                let total = f.triggers.iter().filter(|x| x.category == t.category).count();
+                let name = format!("{}/{}_{}.trg", folders[k], number(counts[k], total), file_name(&t.name));
+                counts[k] += 1;
+                name
+            }
+            None => {
+                top += 1;
+                format!("{}_{}.trg", number(top - 1, top_count), file_name(&t.name))
+            }
         };
         out.push((path, text));
     }
-    Ok(Files { folders: folder_names, files: out })
+    Ok(Files { folders, files: out })
 }
 
 /// What [`to_files`] makes.
@@ -293,19 +298,6 @@ pub struct Files {
     pub folders: Vec<String>,
     /// Each file's path (with `/`) and text.
     pub files: Vec<(String, String)>,
-}
-
-/// [`unique`] for a file name: the number before its extension.
-fn unique_file(file: String, taken: &mut Vec<String>) -> String {
-    let stem = file.strip_suffix(".trg").unwrap_or(&file).to_string();
-    let mut out = file.clone();
-    let mut n = 2;
-    while taken.iter().any(|t| t.eq_ignore_ascii_case(&out)) {
-        out = format!("{stem} ({n}).trg");
-        n += 1;
-    }
-    taken.push(out.clone());
-    out
 }
 
 // ---------------------------------------------------------------- reading

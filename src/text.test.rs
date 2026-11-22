@@ -166,15 +166,17 @@ fn triggers_as_files() {
     t.name = "_variables".into();
     f.triggers.push(t);
     let made = to_files(&f).unwrap();
-    assert_eq!(made.folders, ["Init", "--", "init (2)"]);
+    assert_eq!(made.folders, ["000_Init", "001_--", "002_init"]);
     let files = made.files;
     let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
     assert_eq!(paths, [
         "_variables.trg",
-        "Init/Say _hi_.trg",
-        "Init/Say _hi_ (2).trg",
-        "_variables (2).trg",
+        "000_Init/000_Say _hi_.trg",
+        "000_Init/001_Say _hi_.trg",
+        "000__variables.trg",
     ], "{files:#?}");
+    // Wider numbers when there are more than a thousand.
+    assert_eq!((number(7, 12), number(7, 1000), number(7, 1001)), ("007".into(), "007".into(), "0007".into()));
     // Every file reads back to what it came from.
     let p = trigger_from_text(&files[1].1, None);
     assert_eq!(p.errors, []);

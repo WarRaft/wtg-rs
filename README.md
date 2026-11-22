@@ -125,9 +125,12 @@ it shows back to the text. It may declare global variables too,
 
 `text::to_files` splits a whole file into such files, a map's triggers
 kept in folders: a folder per category, a `.trg` per trigger, the
-variables in `_variables.trg` (`text::VARIABLES_FILE`). Names become
-file names on every system (`text::file_name`), and clashes get `(2)`,
-`(3)` ...
+variables in `_variables.trg` (`text::VARIABLES_FILE`). The game builds
+them top to bottom, so the order is in the names: a folder is the
+category's number and name, `000_Init`, a file the trigger's number in
+its category and name, `000_Spawn.trg` (more digits past a thousand);
+the trigger's own name stays in its text. Names become file names on
+every system (`text::file_name`).
 
 ## What the editor shows
 
