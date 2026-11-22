@@ -21,6 +21,7 @@
 //! back. The format is described in the README.
 
 pub mod text;
+pub mod ui;
 
 use std::collections::HashMap;
 
@@ -32,7 +33,7 @@ pub const MAGIC: [u8; 4] = *b"WTG!";
 
 /// What a function call is: an event, a condition, an action, or (for a
 /// parameter's value only) a call that returns one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FunctionKind {
     Event,
     Condition,
@@ -168,6 +169,23 @@ pub struct Trigger {
     /// Its category's index.
     pub category: i32,
     pub ecas: Vec<Eca>,
+}
+
+/// An empty trigger, enabled, in category 0.
+impl Default for Trigger {
+    fn default() -> Trigger {
+        Trigger {
+            name: String::new(),
+            description: String::new(),
+            is_comment: 0,
+            enabled: 1,
+            is_custom: 0,
+            initially_off: 0,
+            run_on_init: 0,
+            category: 0,
+            ecas: Vec::new(),
+        }
+    }
 }
 
 /// An event, a condition or an action of a trigger.

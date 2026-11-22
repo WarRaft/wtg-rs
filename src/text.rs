@@ -187,21 +187,8 @@ pub fn to_text(f: &Triggers) -> Result<String, String> {
         }
     }
     for t in &f.triggers {
-        out += &format!("\n[trigger]\nname={}\ndescription={}\ncategory={}\n", jass_string(&t.name), jass_string(&t.description), t.category);
-        for (key, v, default) in [
-            ("comment", t.is_comment, 0),
-            ("enabled", t.enabled, 1),
-            ("custom_text", t.is_custom, 0),
-            ("initially_off", t.initially_off, 0),
-            ("run_on_init", t.run_on_init, 0),
-        ] {
-            if v != default {
-                out += &format!("{key}={v}\n");
-            }
-        }
-        for e in &t.ecas {
-            eca(&mut out, e, 0).map_err(|m| format!("trigger {:?}: {m}", t.name))?;
-        }
+        out += &format!("\n[{TRIGGER}]\nname={}\ndescription={}\ncategory={}\n", jass_string(&t.name), jass_string(&t.description), t.category);
+        trigger_body(&mut out, t)?;
     }
     Ok(out)
 }
@@ -447,9 +434,10 @@ impl Value<'_> {
     }
 }
 
-/// What an ECA line's key says: its depth, whether it's enabled, its kind
-/// and block.
-fn eca_key(key: &str) -> Option<(usize, u32, u32, Option<u32>)> {
+/// What an ECA line's key says (`>>!action:1`): its depth (the `>`s),
+/// whether it's enabled (1, or 0 after a `!`), its kind (0 event,
+/// 1 condition, 2 action) and block. `None` for any other key.
+pub fn eca_key(key: &str) -> Option<(usize, u32, u32, Option<u32>)> {
     let depth = key.len() - key.trim_start_matches('>').len();
     let rest = &key[depth..];
     let (enabled, rest) = match rest.strip_prefix('!') {
@@ -692,79 +680,8 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
                 }
                 file.variables.push(v);
             }
-            "trigger" => {
-                const KEYS: [&str; 8] =
-                    ["name", "description", "category", "comment", "enabled", "custom_text", "initially_off", "run_on_init"];
-                let mut t = Trigger {
-                    name: String::new(),
-                    description: String::new(),
-                    is_comment: 0,
-                    enabled: 1,
-                    is_custom: 0,
-                    initially_off: 0,
-                    run_on_init: 0,
-                    category: 0,
-                    ecas: Vec::new(),
-                };
-                // The ECAs being filled: the last one at each depth.
-                let mut path: Vec<usize> = Vec::new();
-                for (key, item) in r.items(section, &KEYS) {
-                    match key.as_str() {
-                        "name" => t.name = r.string(item).unwrap_or_default(),
-                        "description" => t.description = r.string(item).unwrap_or_default(),
-                        "category" => t.category = r.int(item).unwrap_or(0),
-                        "comment" if r.v7_only(item, &key) => t.is_comment = r.int(item).unwrap_or(0),
-                        "comment" => {}
-                        "enabled" => t.enabled = r.int(item).unwrap_or(1),
-                        "custom_text" => t.is_custom = r.int(item).unwrap_or(0),
-                        "initially_off" => t.initially_off = r.int(item).unwrap_or(0),
-                        "run_on_init" => t.run_on_init = r.int(item).unwrap_or(0),
-                        _ => {
-                            let Some((depth, enabled, kind, group)) = eca_key(&key) else {
-                                r.err(item, format!(
-                                    "no field `{key}` in [trigger]: it has {}, and event, condition, action lines (`!` before one disabled, `>` and `:block` inside another)",
-                                    KEYS.join(", ")
-                                ));
-                                continue;
-                            };
-                            // The call first: its tokens show whatever the line's
-                            // place.
-                            let read = r.read(item, |v| {
-                                let start = v.peek().map(|_| v.at).unwrap_or(v.at);
-                                let name = v.word()?;
-                                v.tok(start, v.at, T::Function);
-                                let params = v.args()?;
-                                v.count(FunctionKind::of(kind).unwrap_or(FunctionKind::Action), &name, params.len())?;
-                                Ok((name, params))
-                            });
-                            if depth > path.len() {
-                                r.err(item, format!("{} `>` here: the line before is at {} levels", depth, path.len()));
-                                continue;
-                            }
-                            if (depth > 0) != group.is_some() {
-                                r.err(item, if depth > 0 {
-                                    "a line inside another says its block: `:` and a number after its kind"
-                                } else {
-                                    "a line at the top has no block (`:`)"
-                                });
-                                continue;
-                            }
-                            if depth > 0 && !r.v7 {
-                                r.err(item, "lines inside others are in version 7 (The Frozen Throne)");
-                                continue;
-                            }
-                            let Some((name, params)) = read else { continue };
-                            path.truncate(depth);
-                            let e = Eca { kind, group, name, enabled, params, children: Vec::new() };
-                            let mut list = &mut t.ecas;
-                            for &i in &path {
-                                list = &mut list[i].children;
-                            }
-                            list.push(e);
-                            path.push(list.len() - 1);
-                        }
-                    }
-                }
+            TRIGGER => {
+                let (t, _) = read_trigger(&mut r, section, true);
                 file.triggers.push(t);
             }
             other => r.errors.push(error(
@@ -774,6 +691,182 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
         }
     }
     finish(r, file)
+}
+
+/// The fields a `[trigger]` has; a trigger file of its own has them but
+/// `category`.
+const TRIGGER_KEYS: [&str; 8] = ["name", "description", "category", "comment", "enabled", "custom_text", "initially_off", "run_on_init"];
+
+/// Reads a `[trigger]` section: the trigger, its ECAs as far as they read
+/// (a line with an error is left out, and so is what's inside it), and
+/// the line of each ECA in the order a walk of the tree meets them (an
+/// ECA, then what's inside it). `category` is a field when
+/// `with_category`; a trigger file of its own has its folder instead.
+fn read_trigger<'a>(r: &mut Reader<'a>, section: &'a Section, with_category: bool) -> (Trigger, Vec<usize>) {
+    let keys: Vec<&str> = TRIGGER_KEYS.iter().copied().filter(|k| with_category || *k != "category").collect();
+    let mut t = Trigger::default();
+    // Each ECA's path and line, put in walk order at the end.
+    let mut lines: Vec<(Vec<usize>, usize)> = Vec::new();
+    // The ECAs being filled: the last one at each depth.
+    let mut path: Vec<usize> = Vec::new();
+    // The depth of a line that didn't read: what's inside it is left out
+    // too, and the depth of the last line left out, which a line inside
+    // may go one below.
+    let mut dropped: Option<usize> = None;
+    let mut last = 0;
+    for (key, item) in r.items(section, &keys) {
+        match key.as_str() {
+            "name" => t.name = r.string(item).unwrap_or_default(),
+            "description" => t.description = r.string(item).unwrap_or_default(),
+            "category" if with_category => t.category = r.int(item).unwrap_or(0),
+            "category" => r.err(item, "no field `category` in a trigger file: its folder is its category"),
+            "comment" if r.v7_only(item, &key) => t.is_comment = r.int(item).unwrap_or(0),
+            "comment" => {}
+            "enabled" => t.enabled = r.int(item).unwrap_or(1),
+            "custom_text" => t.is_custom = r.int(item).unwrap_or(0),
+            "initially_off" => t.initially_off = r.int(item).unwrap_or(0),
+            "run_on_init" => t.run_on_init = r.int(item).unwrap_or(0),
+            _ => {
+                let Some((depth, enabled, kind, group)) = eca_key(&key) else {
+                    r.err(item, format!(
+                        "no field `{key}` in [{TRIGGER}]: it has {}, and event, condition, action lines (`!` before one disabled, `>` and `:block` inside another)",
+                        keys.join(", ")
+                    ));
+                    continue;
+                };
+                // The call first: its tokens show whatever the line's
+                // place.
+                let read = r.read(item, |v| {
+                    let start = v.peek().map(|_| v.at).unwrap_or(v.at);
+                    let name = v.word()?;
+                    v.tok(start, v.at, T::Function);
+                    let params = v.args()?;
+                    v.count(FunctionKind::of(kind).unwrap_or(FunctionKind::Action), &name, params.len())?;
+                    Ok((name, params))
+                });
+                let allowed = if dropped.is_some() { last + 1 } else { path.len() };
+                if depth > allowed {
+                    r.err(item, format!("{} `>` here: the line before is at {} levels", depth, allowed));
+                    continue;
+                }
+                if (depth > 0) != group.is_some() {
+                    r.err(item, if depth > 0 {
+                        "a line inside another says its block: `:` and a number after its kind"
+                    } else {
+                        "a line at the top has no block (`:`)"
+                    });
+                    continue;
+                }
+                if depth > 0 && !r.v7 {
+                    r.err(item, "lines inside others are in version 7 (The Frozen Throne)");
+                    continue;
+                }
+                if dropped.is_some_and(|d| depth > d) {
+                    last = depth;
+                    continue;
+                }
+                dropped = None;
+                let Some((name, params)) = read else {
+                    (dropped, last) = (Some(depth), depth);
+                    continue;
+                };
+                path.truncate(depth);
+                let e = Eca { kind, group, name, enabled, params, children: Vec::new() };
+                let mut list = &mut t.ecas;
+                for &i in &path {
+                    list = &mut list[i].children;
+                }
+                list.push(e);
+                path.push(list.len() - 1);
+                lines.push((path.clone(), item.line));
+            }
+        }
+    }
+    // Paths compare in walk order: a parent before what's inside it, and
+    // siblings in turn.
+    lines.sort();
+    (t, lines.into_iter().map(|(_, l)| l).collect())
+}
+
+/// The section of a trigger file of its own.
+pub const TRIGGER: &str = "trigger";
+
+/// What [`trigger_from_text`] read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedTrigger {
+    /// The trigger as far as it reads: a line with an error is left out,
+    /// and what's inside it. Whole when `errors` is empty.
+    pub trigger: Trigger,
+    /// The line (from 1) of each ECA of `trigger`, in the order a walk of
+    /// the tree meets them: an ECA, then what's inside it.
+    pub lines: Vec<usize>,
+    pub errors: Vec<ParseError>,
+    pub tokens: Vec<SemanticToken>,
+}
+
+/// Reads a trigger file of its own (`.trg`): one `[trigger]` section, as
+/// in the text form of a whole file but without `category` (its folder
+/// is its category), always of version 7 (lines inside others). With
+/// `data`, checks every function against it too.
+pub fn trigger_from_text(text: &str, data: Option<&TriggerData>) -> ParsedTrigger {
+    let doc = parse_bni(text);
+    let mut r = Reader { lines: text.lines().collect(), errors: doc.errors.clone(), tokens: Vec::new(), v7: true, data };
+    for s in &doc.sections {
+        let n = s.name.span;
+        r.tokens.push(SemanticToken::new(n.start_line, n.start_col, n.end_col, T::Namespace, Modifiers::NONE));
+    }
+    for item in &doc.preamble {
+        r.err(item, format!("a field outside a section: a trigger file is one [{TRIGGER}]"));
+    }
+    let mut read = None;
+    for section in &doc.sections {
+        if section.name.text != TRIGGER {
+            r.errors.push(error(section.name.span, format!("no section [{}]: a trigger file is one [{TRIGGER}]", section.name.text)));
+        } else if read.is_some() {
+            r.errors.push(error(section.name.span, format!("a second [{TRIGGER}]: a trigger file is one trigger")));
+        } else {
+            read = Some(read_trigger(&mut r, section, false));
+        }
+    }
+    if doc.sections.is_empty() {
+        r.errors.push(error(Span::new(1, 1, 1, 2), format!("a trigger file is one [{TRIGGER}]")));
+    }
+    let (trigger, lines) = read.unwrap_or_else(|| (Trigger::default(), Vec::new()));
+    r.errors.sort_by_key(|e| (e.line, e.col));
+    ParsedTrigger { trigger, lines, errors: r.errors, tokens: r.tokens }
+}
+
+/// What to highlight in a trigger file of its own, in the editor's wire
+/// format.
+pub fn encoded_trigger_semantic_tokens(src: &str) -> Vec<u32> {
+    parser_rs::semantic::encode(trigger_from_text(src, None).tokens, src)
+}
+
+/// The text of a trigger file of its own: `[trigger]`, its fields but
+/// `category`, and its ECAs. Fails as [`to_text`] does.
+pub fn trigger_to_text(t: &Trigger) -> Result<String, String> {
+    let mut out = format!("[{TRIGGER}]\nname={}\ndescription={}\n", jass_string(&t.name), jass_string(&t.description));
+    trigger_body(&mut out, t)?;
+    Ok(out)
+}
+
+/// A trigger's flags that aren't the default, and its ECAs.
+fn trigger_body(out: &mut String, t: &Trigger) -> Result<(), String> {
+    for (key, v, default) in [
+        ("comment", t.is_comment, 0),
+        ("enabled", t.enabled, 1),
+        ("custom_text", t.is_custom, 0),
+        ("initially_off", t.initially_off, 0),
+        ("run_on_init", t.run_on_init, 0),
+    ] {
+        if v != default {
+            *out += &format!("{key}={v}\n");
+        }
+    }
+    for e in &t.ecas {
+        eca(out, e, 0).map_err(|m| format!("trigger {:?}: {m}", t.name))?;
+    }
+    Ok(())
 }
 
 fn finish(mut r: Reader, file: Triggers) -> Parsed {

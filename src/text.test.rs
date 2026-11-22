@@ -100,3 +100,36 @@ fn categories_by_index() {
     assert_eq!(read_string(" \"x\\ny\" "), Some("x\ny".into()));
     assert_eq!(read_string("\"x\" y"), None);
 }
+
+#[test]
+fn a_trigger_file_of_its_own() {
+    let data = TriggerData::parse(DATA);
+    let mut t = sample().triggers.remove(0);
+    t.category = 0;
+    let text = trigger_to_text(&t).unwrap();
+    assert!(text.starts_with("[trigger]\nname=\"Say \\\"hi\\\"\"\ndescription="), "{text}");
+    assert!(!text.contains("category"), "{text}");
+    let p = trigger_from_text(&text, Some(&data));
+    assert_eq!(p.errors, [], "{text}");
+    assert_eq!(p.trigger, t);
+    // Every ECA's line, a parent before what's inside it.
+    let ecas: Vec<usize> = text.lines().enumerate().filter(|(_, l)| l.contains('(')).map(|(i, _)| i + 1).collect();
+    assert_eq!(p.lines, ecas);
+
+    let lines = |t: &str| -> Vec<(usize, String)> {
+        trigger_from_text(t, Some(&data)).errors.into_iter().map(|e| (e.line, e.message)).collect()
+    };
+    let e = lines("[trigger]\ncategory=1\n[trigger]\n[wtg]\n");
+    assert_eq!(e.iter().map(|x| x.0).collect::<Vec<_>>(), [2, 3, 4], "{e:?}");
+    assert!(e[0].1.contains("its folder is its category"), "{e:?}");
+    assert!(e[1].1.contains("a second [trigger]"), "{e:?}");
+    assert!(e[2].1.contains("no section [wtg]"), "{e:?}");
+    assert_eq!(lines("")[0].1, "a trigger file is one [trigger]");
+
+    // A line that doesn't read is left out, and what's inside it; the rest
+    // is read.
+    let p = trigger_from_text("[trigger]\naction=Nope()\n>action:0=DoNothing()\naction=DoNothing()\n", Some(&data));
+    assert_eq!(p.errors.len(), 1, "{:?}", p.errors);
+    assert_eq!(p.trigger.ecas.len(), 1);
+    assert_eq!(p.lines, [4]);
+}

@@ -112,6 +112,33 @@ action=IfThenElseMultiple()
 Reading the text needs no `TriggerData.txt`; given one, every function's
 name and parameter count is checked against it.
 
+### A trigger of its own
+
+`text::trigger_from_text` and `text::trigger_to_text`: one trigger as a
+file (`.trg` in the [wc3-rs](../wc3-rs) editor), a `[trigger]` section
+as above without `category` (its folder is its category), always of
+version 7. What it reads has the trigger as far as it reads (a line with
+an error is left out, and what's inside it), and the line of each ECA,
+in the order a walk of the tree meets them, for an editor to map what
+it shows back to the text.
+
+## What the editor shows
+
+`ui::Ui::parse` reads World Editor's `UI\TriggerData.txt` (categories
+with their names and icons, types, presets, each function's parameter
+types and category) and `UI\TriggerStrings.txt` (each function's title,
+phrase and hint), the `WESTRING_` keys they name resolved by the caller
+from `UI\WorldEditStrings.txt`. `Ui::render` shows a trigger as the
+trigger editor does: its events, conditions and actions as phrases,
+each after its category's name unless the category hides it
+(`Unit - Create 1 hfoo for Player 1 (Red) at (Center of (Playable map
+area)) facing Default building facing degrees`), calls in parentheses,
+presets by their names, and what's inside a line in its blocks. A
+phrase's `~Name`s are the parameters in order. Which functions have
+blocks isn't in the files (the editor knows it): `ui::blocks` says,
+an if/then/else's three, `AndMultiple`'s and `OrMultiple`'s conditions,
+and a loop's actions for every other action named `...Multiple`.
+
 ## CLI
 
 ```sh
