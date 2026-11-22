@@ -102,9 +102,9 @@ fn a_trigger_as_world_editor_lays_it_out() {
         "    DisplayTextToForce(GetPlayersAll(), \"Say \\\"hi\\\"\")\n",
         // Custom script as it is written.
         "    call BJDebugMsg(I2S(i))\n",
-        "trigger gg_trg_Spawn_Units = CreateTrigger()\n\nfunction main\n    // Map initialization",
+        "trigger gg_trg_Spawn_Units = CreateTrigger()\n\nfunction main\n    DisableTrigger(gg_trg_Spawn_Units)\n    // Map initialization",
         "    TriggerRegisterAnyUnitEventBJ(gg_trg_Spawn_Units, EVENT_PLAYER_UNIT_DEATH)\n",
-        "    TriggerAddCondition(gg_trg_Spawn_Units, Condition(function Trig_Spawn_Units_Conditions))\n    DisableTrigger(gg_trg_Spawn_Units)\n    TriggerAddAction(gg_trg_Spawn_Units, function Trig_Spawn_Units_Actions)\nendfunction\n",
+        "    TriggerAddCondition(gg_trg_Spawn_Units, Condition(function Trig_Spawn_Units_Conditions))\n    TriggerAddAction(gg_trg_Spawn_Units, function Trig_Spawn_Units_Actions)\nendfunction\n",
     ] {
         assert!(j.contains(part), "{part}\n---\n{j}");
     }
@@ -209,4 +209,38 @@ fn world_editors_own_actions() {
         assert!(j.contains(part), "{part}\n---\n{j}");
     }
     assert_eq!(j.matches("local unit v").count(), 1, "{j}");
+}
+
+#[test]
+fn variables_as_world_editor_initializes_them() {
+    let p = trigger_from_text(concat!(
+        "[variable]\nname=\"n\"\ntype=\"integer\"\nsize=1\n\n",
+        "[variable]\nname=\"g\"\ntype=\"group\"\nsize=1\n\n",
+        "[variable]\nname=\"u\"\ntype=\"unit\"\nsize=1\n\n",
+        "[variable]\nname=\"s\"\ntype=\"string\"\nsize=1\ninitial=\"hi\"\n\n",
+        "[variable]\nname=\"a\"\ntype=\"integer\"\narray=1\nsize=3\ninitial=\"7\"\n\n",
+        "[variable]\nname=\"us\"\ntype=\"unit\"\narray=1\nsize=2\n\n",
+        "[variable]\nname=\"e\"\ntype=\"string\"\nsize=1\n",
+    ), None);
+    assert_eq!(p.errors, []);
+    let data = format!("{DATA}[TriggerTypes]\nunit=0,1,1,WESTRING_TRIGTYPE_unit\n");
+    let ui = Ui::parse(&data, "", &|k| k.to_string());
+    assert_eq!(
+        variables(&p.variables, &ui),
+        "integer udg_n = 0\ngroup udg_g = null\nunit udg_u = null\nstring udg_s = \"\"\ninteger array udg_a\nunit array udg_us\nstring udg_e = \"\"\n\nfunction InitGlobals\n    integer i = 0\n    udg_n = 0\n    udg_g = CreateGroup()\n    udg_s = \"hi\"\n    i = 0\n    loop\n        exitwhen (i > 3)\n        udg_a[i] = 7\n        i = i + 1\n    endloop\n    udg_e = \"\"\nendfunction\n"
+    );
+}
+
+#[test]
+fn triggers_run_at_initialization() {
+    let t = |text: &str| trigger_from_text(text, None).trigger.unwrap();
+    let all = [
+        t("[trigger]\nname=\"Init A\"\nevent=MapInitializationEvent()\n"),
+        t("[trigger]\nname=\"Off\"\nenabled=0\nevent=MapInitializationEvent()\n"),
+        t("[trigger]\nname=\"Event off\"\n!event=MapInitializationEvent()\n"),
+        t("[trigger]\nname=\"Initially off\"\ninitially_off=1\nevent=MapInitializationEvent()\n"),
+        t("[trigger]\nname=\"Code\"\ncustom_text=1\nrun_on_init=1\n"),
+        t("[trigger]\nname=\"Other\"\nevent=TriggerRegisterAnyUnitEventBJ(PlayerUnitEventDies)\n"),
+    ];
+    assert_eq!(initialization_triggers(&all), ["gg_trg_Init_A", "gg_trg_Code"]);
 }

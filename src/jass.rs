@@ -106,6 +106,84 @@ pub fn compile(trigger: Option<&Trigger>, name: &str, own: &[Declared], visible:
     out
 }
 
+/// The map's global variables (`variables`) as World Editor builds them:
+/// each declared at the top level with its type's empty value (`null`, `0`,
+/// `false`, `""`; an array with none), and `InitGlobals`, which the map's
+/// `main` calls after `InitBlizzard`, setting each to its initial value
+/// or its type's default (`CreateGroup()`, `0` ...; a string `""`): an array each of its
+/// cells up to its size (World Editor's loop goes one past it), a
+/// variable of a type without a default and no initial value not at all.
+pub fn variables(variables: &[Declared], ui: &Ui) -> String {
+    let c = Compiler {
+        ui,
+        id: String::new(),
+        own: variables,
+        visible: variables,
+        helpers: Vec::new(),
+        temps: Vec::new(),
+        globals: Vec::new(),
+        n: 0,
+        loops: Vec::new(),
+        script_locals: Vec::new(),
+    };
+    let mut out = String::new();
+    let mut init = String::new();
+    let mut looped = false;
+    for d in variables {
+        let v = &d.variable;
+        let ty = c.jass_type(&v.kind);
+        let name = c.var_name(&v.name);
+        if v.is_array != 0 {
+            let _ = writeln!(out, "{ty} array {name}");
+        } else {
+            let empty = match ui.base(&v.kind) {
+                "integer" | "integervar" | "real" => "0",
+                "boolean" => "false",
+                "string" => "\"\"",
+                _ => "null",
+            };
+            let _ = writeln!(out, "{ty} {name} = {empty}");
+        }
+        let value = if v.has_initial != 0 && !v.initial.is_empty() {
+            Some(c.value(&v.initial, &v.kind))
+        } else {
+            // A string without a default is "" (World Editor's).
+            ui.type_defaults.get(&v.kind).cloned().or_else(|| (ui.base(&v.kind) == "string").then(|| "\"\"".to_string()))
+        };
+        let Some(value) = value else { continue };
+        if v.is_array != 0 {
+            looped = true;
+            let _ = writeln!(init, "    i = 0\n    loop\n        exitwhen (i > {})\n        {name}[i] = {value}\n        i = i + 1\n    endloop", v.array_size);
+        } else {
+            let _ = writeln!(init, "    {name} = {value}");
+        }
+    }
+    out += "\nfunction InitGlobals\n";
+    if looped {
+        out += "    integer i = 0\n";
+    }
+    out += &init;
+    out += "endfunction\n";
+    out
+}
+
+/// The triggers the map runs when it starts (World Editor's
+/// `RunInitializationTriggers`), by their names in the script
+/// (`gg_trg_...`), in their order: each that's on (and not initially
+/// off), isn't a comment, and has an event of map initialization that's
+/// on, or is custom text run on initialization.
+pub fn initialization_triggers<'a>(triggers: impl IntoIterator<Item = &'a Trigger>) -> Vec<String> {
+    triggers
+        .into_iter()
+        .filter(|t| t.enabled != 0 && t.initially_off == 0 && t.is_comment == 0)
+        .filter(|t| {
+            (t.is_custom != 0 && t.run_on_init != 0)
+                || (t.is_custom == 0 && t.ecas.iter().any(|e| e.kind == 0 && e.enabled != 0 && e.name == "MapInitializationEvent"))
+        })
+        .map(|t| format!("gg_trg_{}", ident(&t.name)))
+        .collect()
+}
+
 /// Which loop a block is, for the responses inside it.
 #[derive(Clone)]
 struct Loop {
@@ -516,6 +594,10 @@ impl Compiler<'_> {
         // The trigger, made where it's declared, and set up in a `main` of
         // its own (World Editor's `InitTrig_<name>`).
         let _ = writeln!(out, "{rule}\ntrigger {trig} = CreateTrigger()\n\nfunction main");
+        // Off before its events, as World Editor's.
+        if t.initially_off != 0 {
+            let _ = writeln!(out, "    DisableTrigger({trig})");
+        }
         for e in t.ecas.iter().filter(|e| e.kind == 0 && e.enabled != 0) {
             if e.name == "MapInitializationEvent" {
                 out += "    // Map initialization: run when the map starts (RunInitializationTriggers).\n";
@@ -527,9 +609,6 @@ impl Compiler<'_> {
         }
         if t.ecas.iter().any(|e| e.kind == 1 && e.enabled != 0) {
             let _ = writeln!(out, "    TriggerAddCondition({trig}, Condition(function Trig_{id}_Conditions))");
-        }
-        if t.initially_off != 0 {
-            let _ = writeln!(out, "    DisableTrigger({trig})");
         }
         let _ = writeln!(out, "    TriggerAddAction({trig}, function Trig_{id}_Actions)\nendfunction");
         out
