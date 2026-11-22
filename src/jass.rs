@@ -6,7 +6,11 @@
 //! - A function is called by its name, or its `_Name_ScriptName`; a
 //!   preset is its code (`Player(0)`); a value is written as its type
 //!   wants: a string in quotes, an object's id in single quotes
-//!   (`'hfoo'`), a number as it is, `scriptcode` as it is.
+//!   (`'hfoo'`), a number as it is, `scriptcode` as it is. Custom script
+//!   may be lines (`\n` in its string), each indented as the action is.
+//! - A trigger is named in the script as World Editor names it
+//!   ([`ident`]: `gg_trg_` and its name, `_` for each byte a JASS name
+//!   can't have, a `u` after a `_` at the end).
 //! - Variables: a global is `udg_<name>`, a private one
 //!   `udg_<trigger>__<name>` (so that no other file's clashes), a local
 //!   its name; `gg_...` (the map's triggers, regions, units ...) as it is.
@@ -23,17 +27,26 @@ use crate::text::{Declared, Scope, jass_string};
 use crate::ui::Ui;
 use crate::{Call, Eca, FunctionKind, Param, Trigger};
 
-/// `name` as part of a JASS name, as World Editor makes `gg_trg_<name>`:
-/// what isn't a letter, a digit or `_` is `_`.
+/// What the map's script names a trigger by (`gg_trg_<ident>`,
+/// `Trig_<ident>_Actions` ...), as World Editor makes it of its name: each
+/// byte (UTF-8) that isn't an ASCII letter, a digit or `_` is `_` (so a
+/// Cyrillic letter is two), and a `u` after a `_` at the end, as a JASS
+/// name can't end with one (`DOOR CLOSE 3 1 Копировать` is
+/// `DOOR_CLOSE_3_1_____________________u`). A function of the name alone:
+/// what a map's references say, kept as they are.
 pub fn ident(name: &str) -> String {
-    let out: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect();
-    if out.is_empty() { "_".into() } else { out }
+    let mut out: String = name.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'_' { b as char } else { '_' }).collect();
+    if out.is_empty() || out.ends_with('_') {
+        out.push('u');
+    }
+    out
 }
 
 /// The JASS of a trigger file: its variables (`own`, what the file
 /// declares) and its trigger, if it has one, named `name` (its `name=`, or
-/// the file's when that's empty). `visible` is every variable the file
-/// sees (its own and the project's globals), for their types and names.
+/// the file's when that's empty; in the script [`ident`] of it). `visible`
+/// is every variable the file sees (its own and the project's globals),
+/// for their types and names.
 pub fn compile(trigger: Option<&Trigger>, name: &str, own: &[Declared], visible: &[Declared], ui: &Ui) -> String {
     let id = ident(trigger.map(|t| t.name.as_str()).filter(|n| !n.is_empty()).unwrap_or(name));
     let mut c = Compiler { ui, id, own, visible, helpers: Vec::new(), temps: Vec::new(), globals: Vec::new(), n: 0, loops: Vec::new() };
@@ -350,8 +363,11 @@ impl Compiler<'_> {
                 let _ = writeln!(out, "{pad}// {text}");
             }
             ("CustomScriptCode", _) => {
+                // Lines of their own (`\n` in the text), each indented.
                 let code = e.params.first().map_or("", |p| p.value.as_str());
-                let _ = writeln!(out, "{pad}{code}");
+                for line in code.lines() {
+                    let _ = writeln!(out, "{pad}{}", line.trim_end());
+                }
             }
             ("ReturnAction" | "SkipRemainingActions", _) => {
                 let _ = writeln!(out, "{pad}return");

@@ -148,7 +148,25 @@ fn variables_alone_and_names() {
     let j = compiled("[variable]\nname=\"G\"\ntype=\"group\"\nsize=1\n\n[variable]\nname=\"A\"\ntype=\"unitcode\"\narray=1\nsize=4\n", &[]);
     assert_eq!(j, "globals\n    group udg_G\n    integer array udg_A\nendglobals\n\n");
     assert_eq!(compile(None, "x", &[], &[], &ui()), "// Nothing: no [trigger] and no variables.\n");
-    assert_eq!(ident("Spawn: 1 (b)"), "Spawn__1__b_");
+    assert_eq!(ident("Spawn: 1 (b)"), "Spawn__1__b_u");
     // A trigger without a name is the file's.
     assert!(compiled("[trigger]\naction=CustomScriptCode(\"x\")\n", &[]).contains("function Trig_file_Actions"));
+}
+
+#[test]
+fn custom_script_of_lines() {
+    let j = compiled("[trigger]\naction=CustomScriptCode(\"local integer n = 1\\ncall BJDebugMsg(I2S(n))  \")\n", &[]);
+    assert!(j.contains("\n    local integer n = 1\n    call BJDebugMsg(I2S(n))\n"), "{j}");
+}
+
+#[test]
+fn trigger_names_as_world_editors() {
+    // A byte each, a `u` after a `_` at the end: as a map's war3map.j has
+    // them (CruiserCommandRU, 523 triggers).
+    assert_eq!(ident("DOOR CLOSE 3 1 Копировать"), format!("DOOR_CLOSE_3_1{}u", "_".repeat(21)));
+    assert_eq!(ident("DOOR CLOSE 3 1 Копировать 2"), format!("DOOR_CLOSE_3_1{}2", "_".repeat(22)));
+    assert_eq!(ident("Melee Initialization"), "Melee_Initialization");
+    assert_eq!(ident(""), "u");
+    let j = compiled("[trigger]\nname=\"Шляпа\"\naction=DoNothing()\n", &[]);
+    assert!(j.contains(&format!("function Trig_{}u_Actions", "_".repeat(10))), "{j}");
 }

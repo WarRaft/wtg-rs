@@ -154,6 +154,15 @@ it (a copy of the group emptied with `FirstOfGroup`; the player slots;
 what's gathered first), their responses (`GetEnumUnit` ...) the loop's.
 What's disabled isn't there.
 
+A trigger's `<name>` there is World Editor's (`jass::ident`), a function
+of its name alone: each byte (UTF-8) that isn't an ASCII letter, a digit
+or `_` is `_`, so a Cyrillic letter is two, and a `u` follows a `_` at
+the end, as a JASS name can't end with one: `DOOR CLOSE 3 1 Копировать`
+is `DOOR_CLOSE_3_1` and twenty-one `_` and `u`. That's what maps'
+`war3map.j` have (three maps, every one of their 1057 triggers), so a
+map's references to its triggers stay true as they are, and nothing
+about it is kept in the text.
+
 ## What the editor shows
 
 `ui::Ui::parse` reads World Editor's `UI\TriggerData.txt` (categories
