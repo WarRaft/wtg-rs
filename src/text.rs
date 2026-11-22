@@ -922,7 +922,8 @@ pub struct ParsedTrigger {
     pub tokens: Vec<SemanticToken>,
 }
 
-/// Reads a trigger file of its own (`.trg`): at most one `[trigger]`
+/// Reads a trigger file of its own (`.trg`; an empty one is fine, a new
+/// file): at most one `[trigger]`
 /// section, as in the text form of a whole file but without `category`
 /// (its folder is its category), and any number of `[variable]`s, the
 /// map's global variables it declares (a file of them alone holds the
@@ -952,9 +953,6 @@ pub fn trigger_from_text(text: &str, data: Option<&TriggerData>) -> ParsedTrigge
                 format!("no section [{other}]: a trigger file has a [{TRIGGER}] and [{VARIABLE}]s"),
             )),
         }
-    }
-    if doc.sections.is_empty() {
-        r.errors.push(error(Span::new(1, 1, 1, 2), format!("a trigger file has a [{TRIGGER}] or [{VARIABLE}]s")));
     }
     let (trigger, lines) = match read {
         Some((t, l)) => (Some(t), l),

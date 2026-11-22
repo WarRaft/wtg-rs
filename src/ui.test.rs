@@ -105,6 +105,7 @@ fn the_editors_data() {
     assert!(!ui.categories["TC_LOGIC"].show_name);
     assert_eq!(ui.presets["Player00"], Preset { kind: "player".into(), display: "Player 1 (Red)".into() });
     assert_eq!(ui.types["unit"], "WESTRING_TRIGTYPE_unit");
+    assert_eq!(ui.variable_types(), [("unit", "WESTRING_TRIGTYPE_unit")]);
     // Labels: the editor's, English for a key it doesn't have.
     assert_eq!(ui.label("WESTRING_TRIGSUBFUNC_IFTHENACTIONS"), "Then - Actions");
     assert_eq!(ui.label("WESTRING_TRIGSUBFUNC_IFELSEACTIONS"), "Else - Actions");

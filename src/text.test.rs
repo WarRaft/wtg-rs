@@ -124,7 +124,7 @@ fn a_trigger_file_of_its_own() {
     assert!(e[0].1.contains("its folder is its category"), "{e:?}");
     assert!(e[1].1.contains("a second [trigger]"), "{e:?}");
     assert!(e[2].1.contains("no section [wtg]"), "{e:?}");
-    assert_eq!(lines("")[0].1, "a trigger file has a [trigger] or [variable]s");
+    assert_eq!(lines(""), []);
 
     // A line that doesn't read is left out, and what's inside it; the rest
     // is read.

@@ -126,6 +126,9 @@ pub struct Ui {
     /// The presets and the functions in the files' order, as the editor
     /// lists them.
     preset_order: Vec<String>,
+    /// The types a global variable can be (`TriggerTypes`' second value
+    /// 1), in order.
+    globals: Vec<String>,
     function_order: Vec<(FunctionKind, String)>,
     /// Labels by `WESTRING_` key, for the ones [`Ui::label`] gives.
     labels: HashMap<&'static str, String>,
@@ -178,6 +181,9 @@ impl Ui {
                     }
                     "TriggerTypes" => {
                         ui.types.entry(key.to_string()).or_insert_with(|| resolve(&field(f, 3)));
+                        if field(f, 1) == "1" && !ui.globals.iter().any(|g| g == key) {
+                            ui.globals.push(key.to_string());
+                        }
                         let base = field(f, 4);
                         if !base.is_empty() {
                             ui.bases.entry(key.to_string()).or_insert(base);
@@ -294,6 +300,12 @@ impl Ui {
             .filter(|(k, _)| *k == kind)
             .filter_map(|(k, n)| self.functions.get(&(*k, n.clone())).map(|f| (n.as_str(), f)))
             .collect()
+    }
+
+    /// The types a global variable can be, in order, each with its name
+    /// (`unit`, `Unit`).
+    pub fn variable_types(&self) -> Vec<(&str, &str)> {
+        self.globals.iter().map(|t| (t.as_str(), self.types.get(t).map_or(t.as_str(), String::as_str))).collect()
     }
 
     /// The calls that return `ty`, in order.
