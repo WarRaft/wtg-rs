@@ -66,7 +66,18 @@ pub fn ident(name: &str) -> String {
 /// for their types and names.
 pub fn compile(trigger: Option<&Trigger>, name: &str, own: &[Declared], visible: &[Declared], ui: &Ui) -> String {
     let id = ident(trigger.map(|t| t.name.as_str()).filter(|n| !n.is_empty()).unwrap_or(name));
-    let mut c = Compiler { ui, id, own, visible, helpers: Vec::new(), temps: Vec::new(), globals: Vec::new(), n: 0, loops: Vec::new() };
+    let mut c = Compiler {
+        ui,
+        id,
+        own,
+        visible,
+        helpers: Vec::new(),
+        temps: Vec::new(),
+        globals: Vec::new(),
+        n: 0,
+        loops: Vec::new(),
+        script_locals: Vec::new(),
+    };
     let body = trigger.map(|t| c.trigger(t));
     let mut out = String::new();
     // The file's globals, and those its loops gather into.
@@ -119,6 +130,12 @@ struct Compiler<'a> {
     n: usize,
     /// The loops the statement being made is inside, innermost last.
     loops: Vec<Loop>,
+    /// The locals custom script has declared so far (type, name): World
+    /// Editor runs a block of `ForGroup` and the like as a function of its
+    /// own, whose custom script may declare a local as another block's
+    /// does; here the blocks are one function, so a second declaration of
+    /// the same local only sets it.
+    script_locals: Vec<(String, String)>,
 }
 
 impl Compiler<'_> {
@@ -381,8 +398,25 @@ impl Compiler<'_> {
                 // Lines of their own (`\n` in the text), each indented.
                 let code = e.params.first().map_or("", |p| p.value.as_str());
                 for line in code.lines() {
-                    let _ = writeln!(out, "{pad}{}", line.trim_end());
+                    let line = self.script_line(line.trim_end());
+                    if !line.is_empty() {
+                        let _ = writeln!(out, "{pad}{line}");
+                    }
                 }
+            }
+            // World Editor's: the event's own call, of the trigger.
+            ("AddTriggerEvent", [trig, _]) => match e.params.get(1).and_then(|p| p.call.as_ref()) {
+                Some(event) => {
+                    let args = std::iter::once(trig.clone()).chain(self.args(0, &event.name, &event.params)).collect::<Vec<_>>().join(", ");
+                    let _ = writeln!(out, "{pad}{}({args})", self.script_name(0, &event.name));
+                }
+                None => {
+                    let _ = writeln!(out, "{pad}// AddTriggerEvent without an event");
+                }
+            },
+            // World Editor's: a loop that waits until the condition holds.
+            ("WaitForCondition", [cond, interval]) => {
+                let _ = writeln!(out, "{pad}loop\n{pad}    exitwhen {cond}\n{pad}    TriggerSleepAction(RMaxBJ(bj_WAIT_FOR_COND_MIN_INTERVAL, {interval}))\n{pad}endloop");
             }
             ("ReturnAction" | "SkipRemainingActions", _) => {
                 let _ = writeln!(out, "{pad}return");
@@ -390,6 +424,26 @@ impl Compiler<'_> {
             _ => {
                 let _ = writeln!(out, "{pad}{}({})", self.script_name(2, &e.name), a.join(", "));
             }
+        }
+    }
+
+    /// A line of custom script as it goes out: a local declared again (of
+    /// the same type and name, see `script_locals`) only sets it, or is
+    /// nothing without a value.
+    fn script_line(&mut self, line: &str) -> String {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let (ty, name) = match words.as_slice() {
+            ["local", ty, rest, ..] if *rest != "array" => (*ty, rest.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).next().unwrap_or("")),
+            _ => return line.to_string(),
+        };
+        let key = (ty.to_string(), name.to_string());
+        if !self.script_locals.contains(&key) {
+            self.script_locals.push(key);
+            return line.to_string();
+        }
+        match line.split_once('=') {
+            Some((_, value)) => format!("set {name} = {}", value.trim()),
+            None => String::new(),
         }
     }
 

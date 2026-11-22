@@ -181,3 +181,32 @@ fn comments_disabled_and_custom_text_as_world_editor_builds_them() {
     let j = compiled("[trigger]\nname=\"Code\"\ncustom_text=1\naction=DoNothing()\n", &[]);
     assert!(j.contains("its code is in war3map.wct") && !j.contains("function Trig"), "{j}");
 }
+
+#[test]
+fn world_editors_own_actions() {
+    let data = format!("{DATA}AddTriggerEvent=0,trigger,event\nWaitForCondition=0,boolexpr,real\n[TriggerEvents]\nTriggerRegisterUnitEvent=0,unit,unitevent\n[TriggerParams]\nUnitEventDeath=0,unitevent,EVENT_UNIT_DEATH,WESTRING_X\n");
+    let ui = Ui::parse(&data, "", &|k| k.to_string());
+    let p = trigger_from_text(concat!(
+        "[trigger]\nname=\"T\"\n",
+        "action=AddTriggerEvent($gg_trg_X, event:TriggerRegisterUnitEvent(GetTriggerUnit(), UnitEventDeath) ~\"\")\n",
+        "action=WaitForCondition(condition:OperatorCompareInteger($n, OperatorEqual, \"1\") ~\"\", \"0.40\")\n",
+        "action=ForGroupMultiple(GetUnitsInRectAll(GetPlayableMapRect()))\n",
+        ">action:0=CustomScriptCode(\"local unit u=GetEnumUnit()\")\n",
+        "action=ForGroupMultiple(GetUnitsInRectAll(GetPlayableMapRect()))\n",
+        ">action:0=CustomScriptCode(\"local unit u = GetEnumUnit()\")\n",
+        ">action:0=CustomScriptCode(\"local unit v\")\n",
+        ">action:0=CustomScriptCode(\"local unit v\")\n",
+    ), None);
+    assert_eq!(p.errors, [], "parse");
+    let n = global("n", "integer");
+    let j = compile(p.trigger.as_ref(), "file", &[], &[n], &ui);
+    for part in [
+        "    TriggerRegisterUnitEvent(gg_trg_X, GetTriggerUnit(), EVENT_UNIT_DEATH)\n",
+        "    loop\n        exitwhen ( udg_n == 1 )\n        TriggerSleepAction(RMaxBJ(bj_WAIT_FOR_COND_MIN_INTERVAL, 0.40))\n    endloop\n",
+        "        local unit u=GetEnumUnit()\n",
+        "        set u = GetEnumUnit()\n",
+    ] {
+        assert!(j.contains(part), "{part}\n---\n{j}");
+    }
+    assert_eq!(j.matches("local unit v").count(), 1, "{j}");
+}
