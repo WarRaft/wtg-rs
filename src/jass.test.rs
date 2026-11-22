@@ -94,7 +94,7 @@ fn a_trigger_as_world_editor_lays_it_out() {
         "integer udg_Spawn_Units__Count = 0\n\n",
         "// Trigger: Spawn Units\n// Line one\n// line two\n",
         "function Trig_Spawn_Units_Conditions returns boolean\n    if ( not ( udg_Spawn_Units__Count == 10 ) ) then\n        return false\n    endif\n    return true\nendfunction\n",
-        "function Trig_Spawn_Units_Actions\n    local integer i = 5\n",
+        "function Trig_Spawn_Units_Actions\n    integer i = 5\n",
         "    CreateNUnitsAtLoc(1, 'hfoo', Player(0), gg_rct_Spawn, 270.0)\n",
         "    udg_Spawn_Units__Count = ( udg_Spawn_Units__Count + 1 )\n",
         "    i = udg_Total\n",
@@ -129,7 +129,7 @@ fn blocks_are_inside_the_actions() {
     );
     let j = compiled(text, &[]);
     for part in [
-        "    local integer n = 0\n    local group l__g1\n    local unit l__u1\n    local integer l__i2\n    local item l__e2\n",
+        "    integer n = 0\n    group l__g1\n    unit l__u1\n    integer l__i2\n    item l__e2\n",
         "    if ( ( n == 1 ) ) then\n        bj_forLoopAIndex = 1\n        bj_forLoopAIndexEnd = 3\n        loop\n            exitwhen bj_forLoopAIndex > bj_forLoopAIndexEnd\n            n = 2\n            bj_forLoopAIndex = bj_forLoopAIndex + 1\n        endloop\n    else\n",
         // ForGroup: a loop of the function, Picked unit the loop's, the
         // local seen.

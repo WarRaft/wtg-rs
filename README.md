@@ -145,8 +145,8 @@ every system (`text::file_name`).
 
 `jass::compile` makes a trigger file's JASS, what a build puts in the
 map's script for it, in the JASS of this toolchain, which the build
-makes the game's of (`jass-rs`'s README): no `set` and `call`, no
-`takes nothing returns nothing`, globals at the top level, and the
+makes the game's of (`jass-rs`'s README): no `set`, `call` and
+`local`, no `takes nothing returns nothing`, globals at the top level, and the
 trigger made where it's declared (`trigger gg_trg_<name> =
 CreateTrigger()`) and set up in a `main` of its own, which the build
 merges with every other (World Editor's `InitTrig_<name>`). Functions

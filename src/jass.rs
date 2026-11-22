@@ -1,9 +1,10 @@
 //! A trigger of its own as JASS: what a build puts in the map's script
 //! for it, its file's variables declared. It's this toolchain's JASS, which
-//! the build makes the game's of (see `jass-rs`'s README): no `set` and
-//! `call` (`x = 1`, `Foo()`), no `takes nothing returns nothing`, globals
-//! declared at the top level, and the trigger set up in a `main` of its
-//! own, which the build merges with every other `main`:
+//! the build makes the game's of (see `jass-rs`'s README): no `set`,
+//! `call` and `local` (`x = 1`, `Foo()`, `integer i = 0` in a function),
+//! no `takes nothing returns nothing`, globals declared at the top level,
+//! and the trigger set up in a `main` of its own, which the build merges
+//! with every other `main`:
 //!
 //! ```jass
 //! trigger gg_trg_Gate = CreateTrigger()
@@ -152,14 +153,13 @@ impl Compiler<'_> {
     }
 
     /// A variable's declaration: `integer udg_n = 0`, `unit array udg_u`;
-    /// `local` before a local's.
+    /// a local's the same, in its function (no `local`).
     fn declaration(&self, d: &Declared, local: bool) -> String {
         let v = &d.variable;
         let ty = self.jass_type(&v.kind);
         let name = self.var_name(&v.name);
-        let prefix = if local { "local " } else { "" };
         if v.is_array != 0 {
-            return format!("{prefix}{ty} array {name}");
+            return format!("{ty} array {name}");
         }
         let init = if v.has_initial != 0 && !v.initial.is_empty() {
             Some(self.value(&v.initial, &v.kind))
@@ -169,8 +169,8 @@ impl Compiler<'_> {
             self.ui.type_defaults.get(&v.kind).filter(|d| local || !d.contains('(')).cloned()
         };
         match init {
-            Some(i) => format!("{prefix}{ty} {name} = {i}"),
-            None => format!("{prefix}{ty} {name}"),
+            Some(i) => format!("{ty} {name} = {i}"),
+            None => format!("{ty} {name}"),
         }
     }
 
@@ -264,7 +264,7 @@ impl Compiler<'_> {
     }
 
     fn temp(&mut self, ty: &str, name: &str) {
-        self.temps.push(format!("local {ty} {name}"));
+        self.temps.push(format!("{ty} {name}"));
     }
 
     /// Statements of actions, at `indent`.
