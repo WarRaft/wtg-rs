@@ -1,7 +1,21 @@
 //! A trigger of its own as JASS: what a build puts in the map's script
-//! for it, laid out as World Editor's triggers are (`Trig_<name>_Conditions`,
-//! `Trig_<name>_Actions`, `InitTrig_<name>`), its file's variables
-//! declared.
+//! for it, its file's variables declared. It's this toolchain's JASS, which
+//! the build makes the game's of (see `jass-rs`'s README): no `set` and
+//! `call` (`x = 1`, `Foo()`), no `takes nothing returns nothing`, globals
+//! declared at the top level, and the trigger set up in a `main` of its
+//! own, which the build merges with every other `main`:
+//!
+//! ```jass
+//! trigger gg_trg_Gate = CreateTrigger()
+//!
+//! function main
+//!     TriggerRegisterDeathEvent(gg_trg_Gate, gg_dest_B000_0261)
+//!     TriggerAddAction(gg_trg_Gate, function Trig_Gate_Actions)
+//! endfunction
+//! ```
+//!
+//! Its functions are named as World Editor's (`Trig_<name>_Conditions`,
+//! `Trig_<name>_Actions`); World Editor's `InitTrig_<name>` is that `main`.
 //!
 //! - A function is called by its name, or its `_Name_ScriptName`; a
 //!   preset is its code (`Player(0)`); a value is written as its type
@@ -62,11 +76,10 @@ pub fn compile(trigger: Option<&Trigger>, name: &str, own: &[Declared], visible:
         .chain(c.globals.iter().cloned())
         .collect();
     if !globals.is_empty() {
-        out += "globals\n";
         for g in &globals {
-            let _ = writeln!(out, "    {g}");
+            let _ = writeln!(out, "{g}");
         }
-        out += "endglobals\n\n";
+        out += "\n";
     }
     if let Some(body) = body {
         for h in &c.helpers {
@@ -269,7 +282,7 @@ impl Compiler<'_> {
             ("SetVariable", [var, _]) => {
                 let ty = e.params.first().map_or(String::new(), |p| self.var_type(&p.value));
                 let value = self.expr(&e.params[1], &ty);
-                let _ = writeln!(out, "{pad}set {var} = {value}");
+                let _ = writeln!(out, "{pad}{var} = {value}");
             }
             ("IfThenElseMultiple", _) => {
                 let cond = self.conditions(&block(e, 0), " and ", "true");
@@ -292,20 +305,20 @@ impl Compiler<'_> {
             }
             ("ForLoopAMultiple" | "ForLoopBMultiple" | "ForLoopA" | "ForLoopB", [from, to, ..]) => {
                 let i = if e.name.starts_with("ForLoopA") { "bj_forLoopAIndex" } else { "bj_forLoopBIndex" };
-                let _ = writeln!(out, "{pad}set {i} = {from}\n{pad}set {i}End = {to}\n{pad}loop\n{pad}    exitwhen {i} > {i}End");
+                let _ = writeln!(out, "{pad}{i} = {from}\n{pad}{i}End = {to}\n{pad}loop\n{pad}    exitwhen {i} > {i}End");
                 match e.name.ends_with("Multiple") {
                     true => self.statements(&block(e, 0), indent + 1, out),
                     false => self.inline_action(e.params.get(2), indent + 1, out),
                 }
-                let _ = writeln!(out, "{pad}    set {i} = {i} + 1\n{pad}endloop");
+                let _ = writeln!(out, "{pad}    {i} = {i} + 1\n{pad}endloop");
             }
             ("ForLoopVarMultiple" | "ForLoopVar", [var, from, to, ..]) => {
-                let _ = writeln!(out, "{pad}set {var} = {from}\n{pad}loop\n{pad}    exitwhen {var} > {to}");
+                let _ = writeln!(out, "{pad}{var} = {from}\n{pad}loop\n{pad}    exitwhen {var} > {to}");
                 match e.name.ends_with("Multiple") {
                     true => self.statements(&block(e, 0), indent + 1, out),
                     false => self.inline_action(e.params.get(3), indent + 1, out),
                 }
-                let _ = writeln!(out, "{pad}    set {var} = {var} + 1\n{pad}endloop");
+                let _ = writeln!(out, "{pad}    {var} = {var} + 1\n{pad}endloop");
             }
             ("ForGroupMultiple", [group]) => {
                 let n = self.next();
@@ -315,15 +328,15 @@ impl Compiler<'_> {
                 // A group a call makes is the copy; one that's kept is
                 // copied, so the loop can empty it.
                 if e.params[0].kind == 2 {
-                    let _ = writeln!(out, "{pad}set {g} = {group}");
+                    let _ = writeln!(out, "{pad}{g} = {group}");
                 } else {
-                    let _ = writeln!(out, "{pad}set {g} = CreateGroup()\n{pad}call GroupAddGroup({group}, {g})");
+                    let _ = writeln!(out, "{pad}{g} = CreateGroup()\n{pad}GroupAddGroup({group}, {g})");
                 }
-                let _ = writeln!(out, "{pad}loop\n{pad}    set {u} = FirstOfGroup({g})\n{pad}    exitwhen {u} == null\n{pad}    call GroupRemoveUnit({g}, {u})");
+                let _ = writeln!(out, "{pad}loop\n{pad}    {u} = FirstOfGroup({g})\n{pad}    exitwhen {u} == null\n{pad}    GroupRemoveUnit({g}, {u})");
                 self.loops.push(Loop { response: "GetEnumUnit", var: u });
                 self.statements(&block(e, 0), indent + 1, out);
                 self.loops.pop();
-                let _ = writeln!(out, "{pad}endloop\n{pad}call DestroyGroup({g})");
+                let _ = writeln!(out, "{pad}endloop\n{pad}DestroyGroup({g})");
             }
             ("ForForceMultiple", [force]) => {
                 let n = self.next();
@@ -331,12 +344,12 @@ impl Compiler<'_> {
                 self.temp("force", &f);
                 self.temp("integer", &i);
                 self.temp("player", &p);
-                let _ = writeln!(out, "{pad}set {f} = {force}\n{pad}set {i} = 0\n{pad}loop\n{pad}    exitwhen {i} >= bj_MAX_PLAYER_SLOTS");
-                let _ = writeln!(out, "{pad}    set {p} = Player({i})\n{pad}    if IsPlayerInForce({p}, {f}) then");
+                let _ = writeln!(out, "{pad}{f} = {force}\n{pad}{i} = 0\n{pad}loop\n{pad}    exitwhen {i} >= bj_MAX_PLAYER_SLOTS");
+                let _ = writeln!(out, "{pad}    {p} = Player({i})\n{pad}    if IsPlayerInForce({p}, {f}) then");
                 self.loops.push(Loop { response: "GetEnumPlayer", var: p });
                 self.statements(&block(e, 0), indent + 2, out);
                 self.loops.pop();
-                let _ = writeln!(out, "{pad}    endif\n{pad}    set {i} = {i} + 1\n{pad}endloop");
+                let _ = writeln!(out, "{pad}    endif\n{pad}    {i} = {i} + 1\n{pad}endloop");
             }
             ("EnumItemsInRectBJMultiple" | "EnumDestructablesInRectAllMultiple" | "EnumDestructablesInCircleBJMultiple", _) => {
                 let n = self.next();
@@ -347,18 +360,18 @@ impl Compiler<'_> {
                 self.globals.push(format!("{ty} array {all}"));
                 self.globals.push(format!("integer {count} = 0"));
                 self.helpers.push(format!(
-                    "function {gather} takes nothing returns nothing\n    set {all}[{count}] = {response}()\n    set {count} = {count} + 1\nendfunction\n"
+                    "function {gather}\n    {all}[{count}] = {response}()\n    {count} = {count} + 1\nendfunction\n"
                 ));
                 let (i, x) = (format!("l__i{n}"), format!("l__e{n}"));
                 self.temp("integer", &i);
                 self.temp(ty, &x);
-                let _ = writeln!(out, "{pad}set {count} = 0");
-                let _ = writeln!(out, "{pad}call {}({}{}function {gather})", self.script_name(2, &e.name), a.join(", "), if a.is_empty() { "" } else { ", " });
-                let _ = writeln!(out, "{pad}set {i} = 0\n{pad}loop\n{pad}    exitwhen {i} >= {count}\n{pad}    set {x} = {all}[{i}]");
+                let _ = writeln!(out, "{pad}{count} = 0");
+                let _ = writeln!(out, "{pad}{}({}{}function {gather})", self.script_name(2, &e.name), a.join(", "), if a.is_empty() { "" } else { ", " });
+                let _ = writeln!(out, "{pad}{i} = 0\n{pad}loop\n{pad}    exitwhen {i} >= {count}\n{pad}    {x} = {all}[{i}]");
                 self.loops.push(Loop { response, var: x });
                 self.statements(&block(e, 0), indent + 1, out);
                 self.loops.pop();
-                let _ = writeln!(out, "{pad}    set {i} = {i} + 1\n{pad}endloop");
+                let _ = writeln!(out, "{pad}    {i} = {i} + 1\n{pad}endloop");
             }
             ("CommentString", _) => {
                 let text = e.params.first().map_or("", |p| p.value.as_str());
@@ -375,7 +388,7 @@ impl Compiler<'_> {
                 let _ = writeln!(out, "{pad}return");
             }
             _ => {
-                let _ = writeln!(out, "{pad}call {}({})", self.script_name(2, &e.name), a.join(", "));
+                let _ = writeln!(out, "{pad}{}({})", self.script_name(2, &e.name), a.join(", "));
             }
         }
     }
@@ -389,7 +402,7 @@ impl Compiler<'_> {
                 self.statement(&e, indent, out);
             }
             None => {
-                let _ = writeln!(out, "{pad}call DoNothing()");
+                let _ = writeln!(out, "{pad}DoNothing()");
             }
         }
     }
@@ -417,6 +430,9 @@ impl Compiler<'_> {
         };
         if let Some(note) = note {
             let _ = writeln!(out, "//\n// {note}\n{rule}");
+            if t.enabled == 0 && t.is_comment == 0 {
+                let _ = writeln!(out, "trigger {trig} = null");
+            }
             return out;
         }
         let _ = writeln!(out, "{rule}");
@@ -424,7 +440,7 @@ impl Compiler<'_> {
         // Conditions.
         let conditions: Vec<&Eca> = t.ecas.iter().filter(|e| e.kind == 1 && e.enabled != 0).collect();
         if !conditions.is_empty() {
-            let _ = writeln!(out, "function Trig_{id}_Conditions takes nothing returns boolean");
+            let _ = writeln!(out, "function Trig_{id}_Conditions returns boolean");
             for e in conditions {
                 let _ = writeln!(out, "    if ( not {} ) then\n        return false\n    endif", self.condition(&e.name, &e.params, &e.children));
             }
@@ -434,7 +450,7 @@ impl Compiler<'_> {
         // Actions: the statements first, for the locals their loops need.
         let mut body = String::new();
         self.statements(&t.ecas, 1, &mut body);
-        let _ = writeln!(out, "function Trig_{id}_Actions takes nothing returns nothing");
+        let _ = writeln!(out, "function Trig_{id}_Actions");
         let locals: Vec<String> =
             self.own.iter().filter(|d| d.scope == Scope::Local).map(|d| self.declaration(d, true)).chain(self.temps.iter().cloned()).collect();
         for l in &locals {
@@ -443,8 +459,9 @@ impl Compiler<'_> {
         out += &body;
         out += "endfunction\n\n";
 
-        // Its registration.
-        let _ = writeln!(out, "{rule}\nfunction InitTrig_{id} takes nothing returns nothing\n    set {trig} = CreateTrigger()");
+        // The trigger, made where it's declared, and set up in a `main` of
+        // its own (World Editor's `InitTrig_<name>`).
+        let _ = writeln!(out, "{rule}\ntrigger {trig} = CreateTrigger()\n\nfunction main");
         for e in t.ecas.iter().filter(|e| e.kind == 0 && e.enabled != 0) {
             if e.name == "MapInitializationEvent" {
                 out += "    // Map initialization: run when the map starts (RunInitializationTriggers).\n";
@@ -452,15 +469,15 @@ impl Compiler<'_> {
             }
             let a = self.args(0, &e.name, &e.params);
             let args = std::iter::once(trig.clone()).chain(a).collect::<Vec<_>>().join(", ");
-            let _ = writeln!(out, "    call {}({args})", self.script_name(0, &e.name));
+            let _ = writeln!(out, "    {}({args})", self.script_name(0, &e.name));
         }
         if t.ecas.iter().any(|e| e.kind == 1 && e.enabled != 0) {
-            let _ = writeln!(out, "    call TriggerAddCondition({trig}, Condition(function Trig_{id}_Conditions))");
+            let _ = writeln!(out, "    TriggerAddCondition({trig}, Condition(function Trig_{id}_Conditions))");
         }
         if t.initially_off != 0 {
-            let _ = writeln!(out, "    call DisableTrigger({trig})");
+            let _ = writeln!(out, "    DisableTrigger({trig})");
         }
-        let _ = writeln!(out, "    call TriggerAddAction({trig}, function Trig_{id}_Actions)\nendfunction");
+        let _ = writeln!(out, "    TriggerAddAction({trig}, function Trig_{id}_Actions)\nendfunction");
         out
     }
 }

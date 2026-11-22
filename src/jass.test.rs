@@ -91,19 +91,20 @@ fn a_trigger_as_world_editor_lays_it_out() {
     );
     let j = compiled(text, &[global("Total", "integer")]);
     for part in [
-        "globals\n    integer udg_Spawn_Units__Count = 0\nendglobals\n",
+        "integer udg_Spawn_Units__Count = 0\n\n",
         "// Trigger: Spawn Units\n// Line one\n// line two\n",
-        "function Trig_Spawn_Units_Conditions takes nothing returns boolean\n    if ( not ( udg_Spawn_Units__Count == 10 ) ) then\n        return false\n    endif\n    return true\nendfunction\n",
-        "function Trig_Spawn_Units_Actions takes nothing returns nothing\n    local integer i = 5\n",
-        "    call CreateNUnitsAtLoc(1, 'hfoo', Player(0), gg_rct_Spawn, 270.0)\n",
-        "    set udg_Spawn_Units__Count = ( udg_Spawn_Units__Count + 1 )\n",
-        "    set i = udg_Total\n",
-        "    call SetHeroLevelBJ(GetTriggerUnit(), 2, OnOffOn)\n",
-        "    call DisplayTextToForce(GetPlayersAll(), \"Say \\\"hi\\\"\")\n",
+        "function Trig_Spawn_Units_Conditions returns boolean\n    if ( not ( udg_Spawn_Units__Count == 10 ) ) then\n        return false\n    endif\n    return true\nendfunction\n",
+        "function Trig_Spawn_Units_Actions\n    local integer i = 5\n",
+        "    CreateNUnitsAtLoc(1, 'hfoo', Player(0), gg_rct_Spawn, 270.0)\n",
+        "    udg_Spawn_Units__Count = ( udg_Spawn_Units__Count + 1 )\n",
+        "    i = udg_Total\n",
+        "    SetHeroLevelBJ(GetTriggerUnit(), 2, OnOffOn)\n",
+        "    DisplayTextToForce(GetPlayersAll(), \"Say \\\"hi\\\"\")\n",
+        // Custom script as it is written.
         "    call BJDebugMsg(I2S(i))\n",
-        "function InitTrig_Spawn_Units takes nothing returns nothing\n    set gg_trg_Spawn_Units = CreateTrigger()\n    // Map initialization",
-        "    call TriggerRegisterAnyUnitEventBJ(gg_trg_Spawn_Units, EVENT_PLAYER_UNIT_DEATH)\n",
-        "    call TriggerAddCondition(gg_trg_Spawn_Units, Condition(function Trig_Spawn_Units_Conditions))\n    call DisableTrigger(gg_trg_Spawn_Units)\n    call TriggerAddAction(gg_trg_Spawn_Units, function Trig_Spawn_Units_Actions)\nendfunction\n",
+        "trigger gg_trg_Spawn_Units = CreateTrigger()\n\nfunction main\n    // Map initialization",
+        "    TriggerRegisterAnyUnitEventBJ(gg_trg_Spawn_Units, EVENT_PLAYER_UNIT_DEATH)\n",
+        "    TriggerAddCondition(gg_trg_Spawn_Units, Condition(function Trig_Spawn_Units_Conditions))\n    DisableTrigger(gg_trg_Spawn_Units)\n    TriggerAddAction(gg_trg_Spawn_Units, function Trig_Spawn_Units_Actions)\nendfunction\n",
     ] {
         assert!(j.contains(part), "{part}\n---\n{j}");
     }
@@ -129,15 +130,15 @@ fn blocks_are_inside_the_actions() {
     let j = compiled(text, &[]);
     for part in [
         "    local integer n = 0\n    local group l__g1\n    local unit l__u1\n    local integer l__i2\n    local item l__e2\n",
-        "    if ( ( n == 1 ) ) then\n        set bj_forLoopAIndex = 1\n        set bj_forLoopAIndexEnd = 3\n        loop\n            exitwhen bj_forLoopAIndex > bj_forLoopAIndexEnd\n            set n = 2\n            set bj_forLoopAIndex = bj_forLoopAIndex + 1\n        endloop\n    else\n",
+        "    if ( ( n == 1 ) ) then\n        bj_forLoopAIndex = 1\n        bj_forLoopAIndexEnd = 3\n        loop\n            exitwhen bj_forLoopAIndex > bj_forLoopAIndexEnd\n            n = 2\n            bj_forLoopAIndex = bj_forLoopAIndex + 1\n        endloop\n    else\n",
         // ForGroup: a loop of the function, Picked unit the loop's, the
         // local seen.
-        "        set l__g1 = GetUnitsInRectAll(GetPlayableMapRect())\n        loop\n            set l__u1 = FirstOfGroup(l__g1)\n            exitwhen l__u1 == null\n            call GroupRemoveUnit(l__g1, l__u1)\n            call KillUnit(l__u1)\n            set n = 3\n        endloop\n        call DestroyGroup(l__g1)\n    endif\n",
+        "        l__g1 = GetUnitsInRectAll(GetPlayableMapRect())\n        loop\n            l__u1 = FirstOfGroup(l__g1)\n            exitwhen l__u1 == null\n            GroupRemoveUnit(l__g1, l__u1)\n            KillUnit(l__u1)\n            n = 3\n        endloop\n        DestroyGroup(l__g1)\n    endif\n",
         // Enum: gathered first, then a loop.
-        "function Trig_T_Gather2 takes nothing returns nothing\n    set trg__T_e2[trg__T_n2] = GetEnumItem()\n    set trg__T_n2 = trg__T_n2 + 1\nendfunction\n",
-        "globals\n    item array trg__T_e2\n    integer trg__T_n2 = 0\nendglobals\n",
-        "    set trg__T_n2 = 0\n    call EnumItemsInRectBJ(GetPlayableMapRect(), function Trig_T_Gather2)\n",
-        "        set l__e2 = trg__T_e2[l__i2]\n        call RemoveItem(l__e2)\n",
+        "function Trig_T_Gather2\n    trg__T_e2[trg__T_n2] = GetEnumItem()\n    trg__T_n2 = trg__T_n2 + 1\nendfunction\n",
+        "item array trg__T_e2\ninteger trg__T_n2 = 0\n\n",
+        "    trg__T_n2 = 0\n    EnumItemsInRectBJ(GetPlayableMapRect(), function Trig_T_Gather2)\n",
+        "        l__e2 = trg__T_e2[l__i2]\n        RemoveItem(l__e2)\n",
     ] {
         assert!(j.contains(part), "{part}\n---\n{j}");
     }
@@ -146,7 +147,7 @@ fn blocks_are_inside_the_actions() {
 #[test]
 fn variables_alone_and_names() {
     let j = compiled("[variable]\nname=\"G\"\ntype=\"group\"\nsize=1\n\n[variable]\nname=\"A\"\ntype=\"unitcode\"\narray=1\nsize=4\n", &[]);
-    assert_eq!(j, "globals\n    group udg_G\n    integer array udg_A\nendglobals\n\n");
+    assert_eq!(j, "group udg_G\ninteger array udg_A\n\n");
     assert_eq!(compile(None, "x", &[], &[], &ui()), "// Nothing: no [trigger] and no variables.\n");
     assert_eq!(ident("Spawn: 1 (b)"), "Spawn__1__b_u");
     // A trigger without a name is the file's.
@@ -176,7 +177,7 @@ fn comments_disabled_and_custom_text_as_world_editor_builds_them() {
     let j = compiled("[trigger]\nname=\"--- Init ---\"\ncomment=1\n", &[]);
     assert!(j.contains("// A comment, not a trigger") && !j.contains("function Trig"), "{j}");
     let j = compiled("[trigger]\nname=\"Off\"\nenabled=0\naction=DoNothing()\n", &[]);
-    assert!(j.contains("// Disabled: gg_trg_Off is declared (null)") && !j.contains("function Trig"), "{j}");
+    assert!(j.contains("// Disabled: gg_trg_Off is declared (null)") && j.contains("\ntrigger gg_trg_Off = null\n") && !j.contains("\nfunction"), "{j}");
     let j = compiled("[trigger]\nname=\"Code\"\ncustom_text=1\naction=DoNothing()\n", &[]);
     assert!(j.contains("its code is in war3map.wct") && !j.contains("function Trig"), "{j}");
 }

@@ -144,8 +144,14 @@ every system (`text::file_name`).
 ## JASS
 
 `jass::compile` makes a trigger file's JASS, what a build puts in the
-map's script for it: World Editor's layout (`Trig_<name>_Conditions`,
-`Trig_<name>_Actions`, `InitTrig_<name>`), the file's variables
+map's script for it, in the JASS of this toolchain, which the build
+makes the game's of (`jass-rs`'s README): no `set` and `call`, no
+`takes nothing returns nothing`, globals at the top level, and the
+trigger made where it's declared (`trigger gg_trg_<name> =
+CreateTrigger()`) and set up in a `main` of its own, which the build
+merges with every other (World Editor's `InitTrig_<name>`). Functions
+are named as World Editor's (`Trig_<name>_Conditions`,
+`Trig_<name>_Actions`); the file's variables
 (`udg_<name>`; private `udg_<trigger>__<name>`; locals by their names),
 presets as their code, functions by their `_Name_ScriptName`, values by
 their type (`"text"`, `'hfoo'`, `10`). The actions are one function:
