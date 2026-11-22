@@ -157,6 +157,8 @@ fn which_functions_have_blocks() {
     assert_eq!(blocks(2, "IfThenElseMultiple").len(), 3);
     assert_eq!(blocks(1, "AndMultiple")[0].kind, 1);
     assert_eq!(blocks(2, "ForGroupMultiple")[0].kind, 2);
+    assert!(blocks(2, "ForGroupMultiple")[0].callback && !blocks(2, "ForLoopAMultiple")[0].callback);
+    assert!(blocks(2, "IfThenElseMultiple").iter().all(|b| !b.callback));
     assert_eq!(blocks(2, "IfThenElse"), []);
     assert_eq!(blocks(1, "IfThenElseMultiple"), []);
 }

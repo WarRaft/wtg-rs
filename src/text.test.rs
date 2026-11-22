@@ -141,7 +141,11 @@ fn variables_in_a_trigger_file() {
     assert!(text.starts_with("[variable]\nname=\"hero\"\ntype=\"unit\"\narray=1\nsize=12\n\n[variable]"), "{text}");
     let p = trigger_from_text(&text, None);
     assert_eq!(p.errors, []);
-    assert_eq!((p.trigger, p.variables), (None, f.variables.clone()));
+    let globals = |d: Vec<Declared>| -> Vec<Variable> {
+        assert!(d.iter().all(|d| d.scope == Scope::Global));
+        d.into_iter().map(|d| d.variable).collect()
+    };
+    assert_eq!((p.trigger, globals(p.variables)), (None, f.variables.clone()));
     // With a trigger, in any order.
     let both = format!("{text}\n[trigger]\nname=\"T\"\naction=DoNothing()\n");
     let p = trigger_from_text(&both, None);
@@ -183,7 +187,8 @@ fn triggers_as_files() {
     let mut back = p.trigger.unwrap();
     back.category = f.triggers[0].category;
     assert_eq!(back, f.triggers[0]);
-    assert_eq!(trigger_from_text(&files[0].1, None).variables, f.variables);
+    let back: Vec<Variable> = trigger_from_text(&files[0].1, None).variables.into_iter().map(|d| d.variable).collect();
+    assert_eq!(back, f.variables);
 }
 
 #[test]
@@ -194,4 +199,21 @@ fn one_param_or_call() {
     assert!(read_param("a b").is_err());
     let (name, params) = read_call("F(P, \"2\") // c").unwrap();
     assert_eq!(call_text(&name, &params).unwrap(), "F(P, \"2\")");
+}
+
+#[test]
+fn private_and_local_variables() {
+    let text = "[variable]\nname=\"p\"\ntype=\"unit\"\nscope=private\nsize=1\n\n[variable]\nname=\"l\"\ntype=\"integer\"\nscope=local\nsize=1\n\n[trigger]\nname=\"T\"\n";
+    let p = trigger_from_text(text, None);
+    assert_eq!(p.errors, []);
+    assert_eq!(p.variables.iter().map(|d| d.scope).collect::<Vec<_>>(), [Scope::Private, Scope::Local]);
+    // Written back as read.
+    assert!(text.starts_with(&declared_to_text(&p.variables).unwrap()));
+    // A local needs its trigger; an unknown scope; none in the map's file.
+    let e = trigger_from_text("[variable]\nname=\"l\"\ntype=\"integer\"\nscope=local\n", None).errors;
+    assert!(e[0].message.contains("a local variable is its trigger's"), "{e:?}");
+    let e = trigger_from_text("[variable]\nname=\"l\"\ntype=\"integer\"\nscope=public\n", None).errors;
+    assert!(e[0].message.contains("scope \"public\""), "{e:?}");
+    let e = from_text("[wtg]\n[variable]\nname=\"l\"\ntype=\"integer\"\nscope=private\n", None).errors;
+    assert!(e[0].message.contains("`scope` is a trigger file's own"), "{e:?}");
 }

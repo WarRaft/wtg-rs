@@ -171,7 +171,7 @@ pub fn to_text(f: &Triggers) -> Result<String, String> {
     }
     for v in &f.variables {
         out += "\n";
-        variable_text(&mut out, v, v7)?;
+        variable_text(&mut out, v, v7, Scope::Global)?;
     }
     for t in &f.triggers {
         out += &format!("\n[{TRIGGER}]\nname={}\ndescription={}\ncategory={}\n", jass_string(&t.name), jass_string(&t.description), t.category);
@@ -760,7 +760,7 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
                 file.categories.push(c);
             }
             VARIABLE => {
-                let v = read_variable(&mut r, section);
+                let v = read_variable(&mut r, section, false).variable;
                 file.variables.push(v);
             }
             TRIGGER => {
@@ -779,8 +779,45 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
 /// A `[variable]` section.
 pub const VARIABLE: &str = "variable";
 
-fn read_variable<'a>(r: &mut Reader<'a>, section: &'a Section) -> Variable {
-    const KEYS: [&str; 6] = ["name", "type", "unknown", "array", "size", "initial"];
+/// Where a variable a trigger file declares is seen (`scope=`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Scope {
+    /// The map's: every trigger of the project sees it (no `scope=`).
+    #[default]
+    Global,
+    /// A global only its file sees (`scope=private`); a build names it so
+    /// that no other file's clashes.
+    Private,
+    /// A local of its trigger's actions, which are one function
+    /// (`scope=local`): seen in the actions, but not in a block that
+    /// runs as a function of its own (a `ForGroupMultiple`'s, see
+    /// `ui::BlockKind::callback`), nor in the events and conditions.
+    Local,
+}
+
+impl Scope {
+    /// Its word in `scope=`; `None` for a global, which has none.
+    pub fn word(self) -> Option<&'static str> {
+        match self {
+            Scope::Global => None,
+            Scope::Private => Some("private"),
+            Scope::Local => Some("local"),
+        }
+    }
+}
+
+/// A variable a trigger file declares, and where it's seen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Declared {
+    pub variable: Variable,
+    pub scope: Scope,
+}
+
+/// Reads a `[variable]`; `scope` is a field in a trigger file of its own
+/// (`own`) only.
+fn read_variable<'a>(r: &mut Reader<'a>, section: &'a Section, own: bool) -> Declared {
+    const KEYS: [&str; 7] = ["name", "type", "scope", "unknown", "array", "size", "initial"];
+    let mut scope = Scope::Global;
     let mut v = Variable {
         name: String::new(),
         kind: String::new(),
@@ -794,6 +831,14 @@ fn read_variable<'a>(r: &mut Reader<'a>, section: &'a Section) -> Variable {
         match key.as_str() {
             "name" => v.name = r.string(item).unwrap_or_default(),
             "type" => v.kind = r.string(item).unwrap_or_default(),
+            "scope" if !own => r.err(item, "`scope` is a trigger file's own (.trg): the map's file has globals only"),
+            "scope" => match r.read(item, |v| v.word()).as_deref() {
+                Some("private") => scope = Scope::Private,
+                Some("local") => scope = Scope::Local,
+                Some("global") => scope = Scope::Global,
+                Some(w) => r.err(item, format!("scope {w:?}: global (the default), private (this file only) or local (this trigger's actions)")),
+                None => {}
+            },
             "unknown" => v.unknown = r.int(item).unwrap_or(1),
             "array" => v.is_array = r.int(item).unwrap_or(0),
             "size" if r.v7_only(item, &key) => v.array_size = r.int(item).unwrap_or(0),
@@ -805,7 +850,7 @@ fn read_variable<'a>(r: &mut Reader<'a>, section: &'a Section) -> Variable {
             _ => r.unknown(item, &key, VARIABLE, &KEYS),
         }
     }
-    v
+    Declared { variable: v, scope }
 }
 
 /// The fields a `[trigger]` has; a trigger file of its own has them but
@@ -914,7 +959,7 @@ pub struct ParsedTrigger {
     /// file of variables alone.
     pub trigger: Option<Trigger>,
     /// The global variables it declares, in order.
-    pub variables: Vec<Variable>,
+    pub variables: Vec<Declared>,
     /// The line (from 1) of each ECA of `trigger`, in the order a walk of
     /// the tree meets them: an ECA, then what's inside it.
     pub lines: Vec<usize>,
@@ -941,9 +986,16 @@ pub fn trigger_from_text(text: &str, data: Option<&TriggerData>) -> ParsedTrigge
     }
     let mut read = None;
     let mut variables = Vec::new();
+    let mut locals = Vec::new();
     for section in &doc.sections {
         match section.name.text.as_str() {
-            VARIABLE => variables.push(read_variable(&mut r, section)),
+            VARIABLE => {
+                let d = read_variable(&mut r, section, true);
+                if d.scope == Scope::Local {
+                    locals.push(section.name.span);
+                }
+                variables.push(d);
+            }
             TRIGGER if read.is_some() => {
                 r.errors.push(error(section.name.span, format!("a second [{TRIGGER}]: a trigger file is one trigger")));
             }
@@ -952,6 +1004,11 @@ pub fn trigger_from_text(text: &str, data: Option<&TriggerData>) -> ParsedTrigge
                 section.name.span,
                 format!("no section [{other}]: a trigger file has a [{TRIGGER}] and [{VARIABLE}]s"),
             )),
+        }
+    }
+    if read.is_none() {
+        for span in locals {
+            r.errors.push(error(span, format!("a local variable is its trigger's: this file has no [{TRIGGER}]")));
         }
     }
     let (trigger, lines) = match read {
@@ -977,8 +1034,11 @@ pub fn trigger_to_text(t: &Trigger) -> Result<String, String> {
 }
 
 /// A `[variable]` section; `size` in version 7 (`v7`).
-fn variable_text(out: &mut String, v: &Variable, v7: bool) -> Result<(), String> {
+fn variable_text(out: &mut String, v: &Variable, v7: bool, scope: Scope) -> Result<(), String> {
     *out += &format!("[variable]\nname={}\ntype={}\n", jass_string(&v.name), jass_string(&v.kind));
+    if let Some(w) = scope.word() {
+        *out += &format!("scope={w}\n");
+    }
     if v.unknown != 1 {
         *out += &format!("unknown={}\n", v.unknown);
     }
@@ -999,12 +1059,19 @@ fn variable_text(out: &mut String, v: &Variable, v7: bool) -> Result<(), String>
 /// The text of a file of global variables, `[variable]` sections, as a
 /// trigger file of its own holds them.
 pub fn variables_to_text(variables: &[Variable]) -> Result<String, String> {
+    let declared: Vec<Declared> = variables.iter().map(|v| Declared { variable: v.clone(), scope: Scope::Global }).collect();
+    declared_to_text(&declared)
+}
+
+/// [`variables_to_text`] with each variable's scope (`scope=` when it
+/// isn't the map's).
+pub fn declared_to_text(variables: &[Declared]) -> Result<String, String> {
     let mut out = String::new();
-    for (i, v) in variables.iter().enumerate() {
+    for (i, d) in variables.iter().enumerate() {
         if i > 0 {
             out += "\n";
         }
-        variable_text(&mut out, v, true)?;
+        variable_text(&mut out, &d.variable, true, d.scope)?;
     }
     Ok(out)
 }
