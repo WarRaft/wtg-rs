@@ -66,6 +66,11 @@ pub struct Function {
     pub phrase: Vec<Piece>,
     /// What the editor says about it; empty for nothing.
     pub hint: String,
+    /// Its parameters' names in its phrase (`Number` of `~Number`).
+    pub names: Vec<String>,
+    /// What a new one's parameters are (`_Name_Defaults`): a preset, a
+    /// call's name, a value; `_` for none.
+    pub defaults: Vec<String>,
 }
 
 /// A block of an ECA: an if/then/else's conditions, then and else, a
@@ -114,7 +119,14 @@ pub struct Ui {
     /// Types' names, by type (`unit`: `Unit`).
     pub types: HashMap<String, String>,
     pub presets: HashMap<String, Preset>,
+    /// Each type's base type, for a type of the editor's own
+    /// (`unitcode`: `integer`).
+    pub bases: HashMap<String, String>,
     functions: HashMap<(FunctionKind, String), Function>,
+    /// The presets and the functions in the files' order, as the editor
+    /// lists them.
+    preset_order: Vec<String>,
+    function_order: Vec<(FunctionKind, String)>,
     /// Labels by `WESTRING_` key, for the ones [`Ui::label`] gives.
     labels: HashMap<&'static str, String>,
 }
@@ -166,14 +178,26 @@ impl Ui {
                     }
                     "TriggerTypes" => {
                         ui.types.entry(key.to_string()).or_insert_with(|| resolve(&field(f, 3)));
+                        let base = field(f, 4);
+                        if !base.is_empty() {
+                            ui.bases.entry(key.to_string()).or_insert(base);
+                        }
                     }
                     "TriggerParams" => {
-                        ui.presets
-                            .entry(key.to_string())
-                            .or_insert_with(|| Preset { kind: field(f, 1), display: resolve(&field(f, 3)) });
+                        if !ui.presets.contains_key(key) {
+                            ui.preset_order.push(key.to_string());
+                            ui.presets.insert(key.to_string(), Preset { kind: field(f, 1), display: resolve(&field(f, 3)) });
+                        }
                     }
                     _ => {
                         let Some(&(kind, _, _)) = FUNCTION_SECTIONS.iter().find(|s| s.1 == name) else { continue };
+                        if let Some(function) = key.strip_prefix('_').and_then(|k| k.strip_suffix("_Defaults")) {
+                            let entry = ui.functions.entry((kind, function.to_string())).or_default();
+                            if entry.defaults.is_empty() {
+                                entry.defaults = f.iter().map(|v| v.text().trim().to_string()).collect();
+                            }
+                            continue;
+                        }
                         if let Some(function) = key.strip_prefix('_').and_then(|k| k.strip_suffix("_Category")) {
                             let entry = ui.functions.entry((kind, function.to_string())).or_default();
                             if entry.category.is_empty() {
@@ -183,6 +207,9 @@ impl Ui {
                         }
                         if key.starts_with('_') {
                             continue;
+                        }
+                        if !ui.function_order.iter().any(|(k, n)| *k == kind && n == key) {
+                            ui.function_order.push((kind, key.to_string()));
                         }
                         let entry = ui.functions.entry((kind, key.to_string())).or_default();
                         if !entry.args.is_empty() || !entry.returns.is_empty() {
@@ -224,7 +251,14 @@ impl Ui {
                 let entry = ui.functions.entry((kind, key.to_string())).or_default();
                 match *n {
                     1 => entry.title = item.value_text(),
-                    2 => entry.phrase = phrase(&item.fields),
+                    2 => {
+                        entry.phrase = phrase(&item.fields);
+                        entry.names = item
+                            .fields
+                            .iter()
+                            .filter_map(|f| f.text().trim().strip_prefix('~').map(str::to_string))
+                            .collect();
+                    }
                     _ => {}
                 }
             }
@@ -250,6 +284,85 @@ impl Ui {
     /// Does it know any function?
     pub fn is_empty(&self) -> bool {
         self.functions.is_empty()
+    }
+
+    /// The functions of `kind` in the files' order, those of
+    /// `TriggerData.txt` only (not a name `TriggerStrings.txt` alone has).
+    pub fn functions(&self, kind: FunctionKind) -> Vec<(&str, &Function)> {
+        self.function_order
+            .iter()
+            .filter(|(k, _)| *k == kind)
+            .filter_map(|(k, n)| self.functions.get(&(*k, n.clone())).map(|f| (n.as_str(), f)))
+            .collect()
+    }
+
+    /// The calls that return `ty`, in order.
+    pub fn calls_returning(&self, ty: &str) -> Vec<(&str, &Function)> {
+        self.functions(FunctionKind::Call).into_iter().filter(|(_, f)| f.returns == ty).collect()
+    }
+
+    /// The presets of `ty`, in order: key and preset.
+    pub fn presets_of(&self, ty: &str) -> Vec<(&str, &Preset)> {
+        self.preset_order.iter().filter_map(|k| self.presets.get(k).filter(|p| p.kind == ty).map(|p| (k.as_str(), p))).collect()
+    }
+
+    /// `ty`'s base type, or `ty` itself.
+    pub fn base<'a>(&'a self, ty: &'a str) -> &'a str {
+        self.bases.get(ty).map_or(ty, String::as_str)
+    }
+
+    /// Is a value of `ty` typed in (a number, a string, an id: its base is
+    /// `integer`, `real` or `string`)?
+    pub fn takes_value(&self, ty: &str) -> bool {
+        matches!(self.base(ty), "integer" | "real" | "string")
+    }
+
+    /// A new parameter of `ty` from a function's default `d` (see
+    /// [`Function::defaults`]), as the text writes a parameter: the preset
+    /// it names, the call it names with its own defaults, the value it is;
+    /// for none (`_`), an empty value, or the type's first preset when it
+    /// takes no value.
+    pub fn default_param(&self, ty: &str, d: &str) -> String {
+        self.default_at(ty, d, 0)
+    }
+
+    fn default_at(&self, ty: &str, d: &str, depth: usize) -> String {
+        if d.is_empty() || d == "_" {
+            // None: an empty value, or a type's first preset when it takes
+            // no value (a player, an operator).
+            return match self.presets_of(ty).first() {
+                Some((key, _)) if !self.takes_value(ty) => key.to_string(),
+                _ => "\"\"".into(),
+            };
+        }
+        if self.presets.contains_key(d) {
+            return d.to_string();
+        }
+        if depth < 6
+            && let Some(f) = self.function(FunctionKind::Call, d)
+        {
+            return format!("{d}({})", self.default_args(f, depth + 1));
+        }
+        crate::text::jass_string(d)
+    }
+
+    fn default_args(&self, f: &Function, depth: usize) -> String {
+        let args: Vec<String> = f
+            .args
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| self.default_at(ty, f.defaults.get(i).map_or("_", String::as_str), depth))
+            .collect();
+        args.join(", ")
+    }
+
+    /// A new line's value: the function `name` of `kind` with its default
+    /// parameters (`CreateNUnitsAtLoc("1", "hfoo", Player00, ...)`).
+    pub fn new_call(&self, kind: FunctionKind, name: &str) -> String {
+        match self.function(kind, name) {
+            Some(f) => format!("{name}({})", self.default_args(f, 0)),
+            None => format!("{name}()"),
+        }
     }
 }
 
@@ -295,9 +408,11 @@ pub enum Role {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Span {
     Text(String),
-    /// A parameter: what it is and how it shows, which for a call is its
-    /// own phrase.
-    Value { role: Role, spans: Vec<Span> },
+    /// A parameter: what it is, where (its path: the parameter's number
+    /// from 0, then a call's parameter's after a `.`, and `i` for an
+    /// array's index: `2.0.i`; empty for what isn't one), and how it
+    /// shows, which for a call is its own phrase.
+    Value { role: Role, path: String, spans: Vec<Span> },
 }
 
 /// A line of the view: an event, condition or action.
@@ -368,7 +483,7 @@ impl Ui {
         if let Some(c) = category.filter(|c| c.show_name && !c.name.is_empty()) {
             text.push(Span::Text(format!("{} - ", c.name)));
         }
-        text.extend(self.phrase(f, &e.name, &e.params));
+        text.extend(self.phrase(f, &e.name, &e.params, ""));
         let mut blocks: Vec<Block> = blocks(e.kind, &e.name)
             .iter()
             .map(|b| Block { label: self.label(b.key), group: b.group, kind: b.kind, nodes: Vec::new() })
@@ -396,18 +511,21 @@ impl Ui {
         }
     }
 
-    /// The phrase of `f` with `params`; for a function the files don't
-    /// have, its name and parameters as a call.
-    fn phrase(&self, f: Option<&Function>, name: &str, params: &[Param]) -> Vec<Span> {
+    /// The phrase of `f` with `params`, the parameters at `base` (their
+    /// paths: see [`Span::Value`]); for a function the files don't have,
+    /// its name and parameters as a call.
+    fn phrase(&self, f: Option<&Function>, name: &str, params: &[Param], base: &str) -> Vec<Span> {
+        let at = |i: usize| if base.is_empty() { i.to_string() } else { format!("{base}.{i}") };
+        let fixed = |t: &str| Span::Value { role: Role::Unknown, path: String::new(), spans: vec![Span::Text(t.into())] };
         let Some(f) = f.filter(|f| !f.phrase.is_empty() || !f.title.is_empty()) else {
-            let mut out = vec![Span::Value { role: Role::Unknown, spans: vec![Span::Text(format!("{name}("))] }];
+            let mut out = vec![fixed(&format!("{name}("))];
             for (i, p) in params.iter().enumerate() {
                 if i > 0 {
                     out.push(Span::Text(", ".into()));
                 }
-                out.push(self.param(p));
+                out.push(self.param(p, &at(i), ""));
             }
-            out.push(Span::Value { role: Role::Unknown, spans: vec![Span::Text(")".into())] });
+            out.push(fixed(")"));
             return out;
         };
         let pieces = if f.phrase.is_empty() { vec![Piece::Text(f.title.clone())] } else { f.phrase.clone() };
@@ -416,28 +534,29 @@ impl Ui {
             match piece {
                 Piece::Text(t) => out.push(Span::Text(t)),
                 Piece::Param(i) => match params.get(i) {
-                    Some(p) => out.push(self.param(p)),
-                    None => out.push(Span::Value { role: Role::Unknown, spans: vec![Span::Text("?".into())] }),
+                    Some(p) => out.push(self.param(p, &at(i), f.names.get(i).map_or("", String::as_str))),
+                    None => out.push(fixed("?")),
                 },
             }
         }
         // Parameters the phrase doesn't show (a modded editor's data out
         // of step with its strings) aren't lost.
         let shown = f.phrase.iter().filter(|p| matches!(p, Piece::Param(_))).count();
-        for p in params.iter().skip(shown) {
+        for (i, p) in params.iter().enumerate().skip(shown) {
             out.push(Span::Text(", ".into()));
-            out.push(self.param(p));
+            out.push(self.param(p, &at(i), ""));
         }
         out
     }
 
-    /// How a parameter shows.
-    fn param(&self, p: &Param) -> Span {
+    /// How a parameter at `path` shows; `name` is its name in the phrase
+    /// (`Value`), shown for an empty value, as the editor does.
+    fn param(&self, p: &Param, path: &str, name: &str) -> Span {
         let (role, mut spans) = match (p.kind, &p.call) {
             (2, Some(c)) => {
                 let fk = FunctionKind::of(c.kind).unwrap_or(FunctionKind::Call);
                 let f = self.function(fk, &c.name);
-                let phrase = self.phrase(f, &c.name, &c.params);
+                let phrase = self.phrase(f, &c.name, &c.params, path);
                 // A phrase in parentheses, as the editor shows a call; one
                 // the files don't have shows as a call already.
                 let spans = match f {
@@ -451,15 +570,19 @@ impl Ui {
                 (Role::Preset, vec![Span::Text(display)])
             }
             (1, _) => (Role::Variable, vec![Span::Text(p.value.clone())]),
+            (3, _) if p.value.is_empty() => {
+                let shown = if name.is_empty() { "Value" } else { name };
+                (Role::Unknown, vec![Span::Text(shown.into())])
+            }
             (3, _) => (Role::Value, vec![Span::Text(p.value.clone())]),
             _ => (Role::Unknown, vec![Span::Text(p.value.clone())]),
         };
         if let Some(i) = &p.index {
             spans.push(Span::Text("[".into()));
-            spans.push(self.param(i));
+            spans.push(self.param(i, &format!("{path}.i"), "Index"));
             spans.push(Span::Text("]".into()));
         }
-        Span::Value { role, spans }
+        Span::Value { role, path: path.to_string(), spans }
     }
 }
 

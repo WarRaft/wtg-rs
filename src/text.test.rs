@@ -183,3 +183,13 @@ fn triggers_as_files() {
     assert_eq!(back, f.triggers[0]);
     assert_eq!(trigger_from_text(&files[0].1, None).variables, f.variables);
 }
+
+#[test]
+fn one_param_or_call() {
+    let p = read_param("GetRectCenter(GetPlayableMapRect())").unwrap();
+    assert_eq!(param_text(&p).unwrap(), "GetRectCenter(GetPlayableMapRect())");
+    assert_eq!(param_text(&read_param(" $x[\"1\"] ").unwrap()).unwrap(), "$x[\"1\"]");
+    assert!(read_param("a b").is_err());
+    let (name, params) = read_call("F(P, \"2\") // c").unwrap();
+    assert_eq!(call_text(&name, &params).unwrap(), "F(P, \"2\")");
+}

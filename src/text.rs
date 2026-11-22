@@ -180,6 +180,38 @@ pub fn to_text(f: &Triggers) -> Result<String, String> {
     Ok(out)
 }
 
+// ---------------------------------------------------------------- one at a time
+
+/// A parameter as the text writes it (`Player00`, `$hero["1"]`,
+/// `GetRectCenter(GetPlayableMapRect())`, `"10"`).
+pub fn param_text(p: &Param) -> Result<String, String> {
+    param(p)
+}
+
+/// A call as an ECA line's value writes it: `Name(a, b)`.
+pub fn call_text(name: &str, params: &[Param]) -> Result<String, String> {
+    Ok(format!("{}({})", self::name(name)?, args(params)?))
+}
+
+/// Reads one parameter, as [`param_text`] writes it (all of `text` but
+/// spaces around it).
+pub fn read_param(text: &str) -> Result<Param, String> {
+    let mut v = Value { chars: text.chars().collect(), at: 0, v7: true, data: None, toks: Vec::new() };
+    let p = v.param()?;
+    v.end()?;
+    Ok(p)
+}
+
+/// Reads an ECA line's value, `Name(a, b)` (a `//` comment after it
+/// allowed): the name and the parameters.
+pub fn read_call(text: &str) -> Result<(String, Vec<Param>), String> {
+    let mut v = Value { chars: text.chars().collect(), at: 0, v7: true, data: None, toks: Vec::new() };
+    let name = v.word()?;
+    let params = v.args()?;
+    v.end()?;
+    Ok((name, params))
+}
+
 // ---------------------------------------------------------------- as files
 
 /// The file of a map's global variables, at the top of its triggers'

@@ -75,7 +75,7 @@ fn flat(spans: &[Span]) -> String {
     for s in spans {
         match s {
             Span::Text(t) => out += t,
-            Span::Value { role, spans } => {
+            Span::Value { role, spans, .. } => {
                 let r = match role {
                     Role::Preset => 'p',
                     Role::Variable => 'v',
@@ -158,4 +158,42 @@ fn which_functions_have_blocks() {
     assert_eq!(blocks(2, "ForGroupMultiple")[0].kind, 2);
     assert_eq!(blocks(2, "IfThenElse"), []);
     assert_eq!(blocks(1, "IfThenElseMultiple"), []);
+}
+
+#[test]
+fn choices_and_defaults() {
+    let ui = Ui::parse(DATA, STRINGS, &resolve);
+    assert_eq!(ui.presets_of("player").iter().map(|p| p.0).collect::<Vec<_>>(), ["Player00"]);
+    assert_eq!(ui.calls_returning("location").iter().map(|c| c.0).collect::<Vec<_>>(), ["GetRectCenter"]);
+    assert_eq!(ui.functions(FunctionKind::Action).iter().map(|c| c.0).collect::<Vec<_>>(), ["IfThenElseMultiple", "CreateNUnitsAtLoc"]);
+    assert!(ui.takes_value("integer") && !ui.takes_value("player"));
+    let f = ui.function(FunctionKind::Action, "CreateNUnitsAtLoc").unwrap();
+    assert_eq!(f.names, ["Number", "Unit", "Player", "Point", "Direction"]);
+    // RealUnitFacing isn't a preset of this data: a value.
+    assert_eq!(
+        ui.new_call(FunctionKind::Action, "CreateNUnitsAtLoc"),
+        "CreateNUnitsAtLoc(\"1\", \"hfoo\", Player00, GetRectCenter(\"\"), \"RealUnitFacing\")"
+    );
+    assert_eq!(ui.default_param("player", "_"), "Player00");
+    // An empty value shows its name, and every value its path.
+    let p = trigger_from_text("[trigger]\naction=CreateNUnitsAtLoc(\"\", \"hfoo\", Player00, GetRectCenter(GetPlayableMapRect()), $f[\"1\"])\n", None);
+    let v = ui.render(p.trigger.as_ref().unwrap(), &p.lines);
+    let paths: Vec<(String, String)> = {
+        fn walk(s: &[Span], out: &mut Vec<(String, String)>) {
+            for x in s {
+                if let Span::Value { path, spans, .. } = x {
+                    if !path.is_empty() {
+                        out.push((path.clone(), flat(spans)));
+                    }
+                    walk(spans, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&v.actions[0].text, &mut out);
+        out
+    };
+    assert_eq!(paths[0], ("0".to_string(), "Number".to_string()));
+    assert!(paths.contains(&("3.0".to_string(), "(Playable map area)".to_string())), "{paths:?}");
+    assert!(paths.contains(&("4.i".to_string(), "1".to_string())), "{paths:?}");
 }

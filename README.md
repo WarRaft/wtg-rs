@@ -142,6 +142,13 @@ each after its category's name unless the category hides it
 area)) facing Default building facing degrees`), calls in parentheses,
 presets by their names, and what's inside a line in its blocks. A
 phrase's `~Name`s are the parameters in order. Which functions have
+Each parameter shown has its path (`2.0.i`: the third parameter's
+call's first parameter's array index), for an editor to change it
+(`text::read_call`, `text::read_param`, `text::param_text`,
+`text::call_text`), and `Ui` lists what a parameter of a type can be:
+`presets_of`, `calls_returning`, `takes_value` (a type based on
+`integer`, `real` or `string`), and `new_call`, a function with its
+default parameters (`_Name_Defaults`). Which functions have
 blocks isn't in the files (the editor knows it): `ui::blocks` says,
 an if/then/else's three, `AndMultiple`'s and `OrMultiple`'s conditions,
 and a loop's actions for every other action named `...Multiple`.
