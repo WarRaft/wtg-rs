@@ -141,6 +141,19 @@ its category and name, `000_Spawn.trg` (more digits past a thousand);
 the trigger's own name stays in its text. Names become file names on
 every system (`text::file_name`).
 
+## JASS
+
+`jass::compile` makes a trigger file's JASS, what a build puts in the
+map's script for it: World Editor's layout (`Trig_<name>_Conditions`,
+`Trig_<name>_Actions`, `InitTrig_<name>`), the file's variables
+(`udg_<name>`; private `udg_<trigger>__<name>`; locals by their names),
+presets as their code, functions by their `_Name_ScriptName`, values by
+their type (`"text"`, `'hfoo'`, `10`). The actions are one function:
+`ForGroupMultiple`, `ForForceMultiple` and `Enum...Multiple` are loops of
+it (a copy of the group emptied with `FirstOfGroup`; the player slots;
+what's gathered first), their responses (`GetEnumUnit` ...) the loop's.
+What's disabled isn't there.
+
 ## What the editor shows
 
 `ui::Ui::parse` reads World Editor's `UI\TriggerData.txt` (categories

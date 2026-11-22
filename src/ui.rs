@@ -41,6 +41,9 @@ pub struct Preset {
     pub kind: String,
     /// What the editor shows.
     pub display: String,
+    /// What it is in the script (`Player(0)`; a string in backquotes in
+    /// the file, `` `x` ``, is a JASS string, `"x"`).
+    pub code: String,
 }
 
 /// A piece of a phrase.
@@ -71,6 +74,9 @@ pub struct Function {
     /// What a new one's parameters are (`_Name_Defaults`): a preset, a
     /// call's name, a value; `_` for none.
     pub defaults: Vec<String>,
+    /// Its name in the script when it isn't its own (`_Name_ScriptName`:
+    /// `SetHeroLevel` is `SetHeroLevelBJ`); empty otherwise.
+    pub script: String,
 }
 
 /// A block of an ECA: an if/then/else's conditions, then and else, a
@@ -123,6 +129,9 @@ pub struct Ui {
     /// Each type's base type, for a type of the editor's own
     /// (`unitcode`: `integer`).
     pub bases: HashMap<String, String>,
+    /// What a global of a type starts as when it has no initial value
+    /// (`[TriggerTypeDefaults]`: `group` is `CreateGroup()`).
+    pub type_defaults: HashMap<String, String>,
     functions: HashMap<(FunctionKind, String), Function>,
     /// The presets and the functions in the files' order, as the editor
     /// lists them.
@@ -190,14 +199,29 @@ impl Ui {
                             ui.bases.entry(key.to_string()).or_insert(base);
                         }
                     }
+                    "TriggerTypeDefaults" => {
+                        ui.type_defaults.entry(key.to_string()).or_insert_with(|| field(f, 0));
+                    }
                     "TriggerParams" => {
                         if !ui.presets.contains_key(key) {
                             ui.preset_order.push(key.to_string());
-                            ui.presets.insert(key.to_string(), Preset { kind: field(f, 1), display: resolve(&field(f, 3)) });
+                            let code = field(f, 2);
+                            let code = match code.strip_prefix('`').and_then(|c| c.strip_suffix('`')) {
+                                Some(c) => crate::text::jass_string(c),
+                                None => code,
+                            };
+                            ui.presets.insert(key.to_string(), Preset { kind: field(f, 1), display: resolve(&field(f, 3)), code });
                         }
                     }
                     _ => {
                         let Some(&(kind, _, _)) = FUNCTION_SECTIONS.iter().find(|s| s.1 == name) else { continue };
+                        if let Some(function) = key.strip_prefix('_').and_then(|k| k.strip_suffix("_ScriptName")) {
+                            let entry = ui.functions.entry((kind, function.to_string())).or_default();
+                            if entry.script.is_empty() {
+                                entry.script = field(f, 0);
+                            }
+                            continue;
+                        }
                         if let Some(function) = key.strip_prefix('_').and_then(|k| k.strip_suffix("_Defaults")) {
                             let entry = ui.functions.entry((kind, function.to_string())).or_default();
                             if entry.defaults.is_empty() {

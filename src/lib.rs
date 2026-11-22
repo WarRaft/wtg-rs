@@ -22,6 +22,7 @@
 
 pub mod text;
 pub mod ui;
+pub mod jass;
 
 use std::collections::HashMap;
 

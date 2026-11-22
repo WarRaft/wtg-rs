@@ -103,7 +103,7 @@ fn the_editors_data() {
     assert_eq!((call.returns.as_str(), call.args.as_slice()), ("location", &["rect".to_string()][..]));
     assert_eq!(ui.categories["TC_UNIT"], Category { name: "Unit".into(), icon: "ReplaceableTextures\\WorldEditUI\\Actions-Unit".into(), show_name: true });
     assert!(!ui.categories["TC_LOGIC"].show_name);
-    assert_eq!(ui.presets["Player00"], Preset { kind: "player".into(), display: "Player 1 (Red)".into() });
+    assert_eq!(ui.presets["Player00"], Preset { kind: "player".into(), display: "Player 1 (Red)".into(), code: "Player(0)".into() });
     assert_eq!(ui.types["unit"], "WESTRING_TRIGTYPE_unit");
     assert_eq!(ui.variable_types(), [("unit", "WESTRING_TRIGTYPE_unit")]);
     // Labels: the editor's, English for a key it doesn't have.
