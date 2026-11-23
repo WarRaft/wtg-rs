@@ -158,10 +158,24 @@ their type (`"text"`, `'hfoo'`, `10`). The actions are one function:
 `ForGroupMultiple`, `ForForceMultiple` and `Enum...Multiple` are loops of
 it (a copy of the group emptied with `FirstOfGroup`; the player slots;
 what's gathered first), their responses (`GetEnumUnit` ...) the loop's.
-What's disabled isn't there; a comment (`comment=1`) is no trigger, a
-disabled one's `gg_trg_` is declared and its functions left out, and
-custom text (`custom_text=1`) is its code in `war3map.wct`, as World
-Editor builds them.
+A condition given where a `boolexpr` is wanted (a filter: `...Matching`)
+is a function of its own returning it, given as `Condition(function
+Trig_<name>_Filter<n>)`; an action given where `code` is wanted
+(`EnumDestructablesInCircleBJ`'s) is a function of its own, made as the
+actions are (`Trig_<name>_Action<n>`, its loops' locals its own), given
+as `function ...`: World Editor's `Trig_<name>_Func...`. What's disabled
+isn't there; a comment (`comment=1`) is no trigger, a disabled one's
+`gg_trg_` is declared and its functions left out, and custom text
+(`custom_text=1`) is its code in `war3map.wct`: its `gg_trg_` declared
+and its `InitTrig_<name>` called (by World Editor's
+`InitCustomTriggers`), as World Editor builds them.
+
+`jass::map_variable` is a variable as `InitGlobals` sets it: its value,
+else its type's default (`[TriggerTypeDefaults]` of the editor's data),
+else `""` for a string. A trigger is made (`CreateTrigger()`) only by an
+editor whose data says so (`trigger=CreateTrigger()`, a project's
+`TriggerData.patch.txt`): the game's World Editor makes none (Diablo III
+beta), CruiserCommand's does.
 
 A trigger's `<name>` there is World Editor's (`jass::ident`), a function
 of its name alone: each byte (UTF-8) that isn't an ASCII letter, a digit

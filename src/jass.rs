@@ -72,6 +72,8 @@ pub fn compile(trigger: Option<&Trigger>, name: &str, own: &[Declared], visible:
         own,
         visible,
         helpers: Vec::new(),
+        filters: Default::default(),
+        late_globals: Default::default(),
         temps: Vec::new(),
         globals: Vec::new(),
         n: 0,
@@ -86,6 +88,7 @@ pub fn compile(trigger: Option<&Trigger>, name: &str, own: &[Declared], visible:
         .filter(|d| d.scope != Scope::Local)
         .map(|d| c.declaration(d, false))
         .chain(c.globals.iter().cloned())
+        .chain(c.late_globals.borrow().iter().cloned())
         .collect();
     if !globals.is_empty() {
         for g in &globals {
@@ -94,7 +97,7 @@ pub fn compile(trigger: Option<&Trigger>, name: &str, own: &[Declared], visible:
         out += "\n";
     }
     if let Some(body) = body {
-        for h in &c.helpers {
+        for h in c.filters.borrow().iter().chain(&c.helpers) {
             out += h;
             out += "\n";
         }
@@ -134,6 +137,8 @@ pub fn map_variable(d: &Declared, ui: &Ui) -> MapVariable {
         own,
         visible: own,
         helpers: Vec::new(),
+        filters: Default::default(),
+        late_globals: Default::default(),
         temps: Vec::new(),
         globals: Vec::new(),
         n: 0,
@@ -153,11 +158,13 @@ pub fn map_variable(d: &Declared, ui: &Ui) -> MapVariable {
         // A preset (`UnitNull`) is its code (`null`).
         Some(ui.presets.get(&v.initial).map_or_else(|| c.value(&v.initial, &v.kind), |p| p.code.clone()))
     } else {
-        // World Editor's own, past what its data says: a string is "",
-        // a trigger made (seen in a map's war3map.j, in no TriggerData.txt).
+        // World Editor's own, past what its data says: a string is "".
+        // A trigger is made only by an editor whose data says so
+        // (`trigger=CreateTrigger()` in `[TriggerTypeDefaults]`:
+        // CruiserCommand's; the game's World Editor doesn't, Diablo III
+        // beta's).
         ui.type_defaults.get(&v.kind).cloned().or_else(|| match base {
             "string" => Some("\"\"".to_string()),
-            "trigger" => Some("CreateTrigger()".to_string()),
             _ => None,
         })
     };
@@ -197,6 +204,12 @@ struct Compiler<'a> {
     visible: &'a [Declared],
     /// Functions the trigger needs before its own (an enum's gathering).
     helpers: Vec<String>,
+    /// The functions of the conditions given as a `boolexpr` (a filter) and
+    /// of the actions given as `code`: World Editor's `Trig_<name>_Func...`,
+    /// here `Trig_<name>_Filter<n>`, `Trig_<name>_Action<n>`.
+    filters: std::cell::RefCell<Vec<String>>,
+    /// Globals those functions need (what their enums gather).
+    late_globals: std::cell::RefCell<Vec<String>>,
     /// Locals the actions need for their loops: type and name.
     temps: Vec<String>,
     /// Globals the trigger needs (what an enum gathers).
@@ -284,6 +297,55 @@ impl Compiler<'_> {
         let mut out = match (p.kind, &p.call) {
             (0, _) => self.ui.presets.get(&p.value).map_or(p.value.clone(), |pr| pr.code.clone()),
             (1, _) => self.var_name(&p.value),
+            // A condition where a `boolexpr` is wanted: a function of its
+            // own returning it, given as `Condition(function ...)`.
+            (2, Some(c)) if c.kind == 1 && self.ui.base(ty) == "boolexpr" => {
+                let cond = self.call(c);
+                let mut filters = self.filters.borrow_mut();
+                // The same condition: the same function.
+                let body = format!(" returns boolean\n    return {cond}\nendfunction\n");
+                let name = match filters.iter().find(|f| f.ends_with(&body)) {
+                    Some(f) => f.trim_start_matches("function ").split(' ').next().unwrap_or_default().to_string(),
+                    None => {
+                        let name = format!("Trig_{}_Filter{}", self.id, filters.len() + 1);
+                        filters.push(format!("function {name}{body}"));
+                        name
+                    }
+                };
+                format!("Condition(function {name})")
+            }
+            // An action where `code` is wanted: a function of its own doing
+            // it, given as `function ...` (World Editor's, a block of one),
+            // made as the trigger's actions are, apart (its loops' locals its
+            // own, the enum's responses its own).
+            (2, Some(c)) if c.kind == 2 && self.ui.base(ty) == "code" => {
+                let k = self.filters.borrow().len() + 1;
+                let name = format!("Trig_{}_Action{k}", self.id);
+                let mut sub = Compiler {
+                    ui: self.ui,
+                    id: format!("{}_Action{k}", self.id),
+                    own: self.own,
+                    visible: self.visible,
+                    helpers: Vec::new(),
+                    filters: Default::default(),
+                    late_globals: Default::default(),
+                    temps: Vec::new(),
+                    globals: Vec::new(),
+                    n: 0,
+                    loops: Vec::new(),
+                    script_locals: Vec::new(),
+                };
+                let e = Eca { kind: 2, group: None, name: c.name.clone(), enabled: 1, params: c.params.clone(), children: Vec::new() };
+                let mut body = String::new();
+                sub.statement(&e, 1, &mut body);
+                let locals: String = sub.temps.iter().map(|t| format!("    {t}\n")).collect();
+                let mut filters = self.filters.borrow_mut();
+                filters.extend(sub.filters.into_inner());
+                filters.extend(sub.helpers);
+                self.late_globals.borrow_mut().extend(sub.globals.into_iter().chain(sub.late_globals.into_inner()));
+                filters.push(format!("function {name}\n{locals}{body}endfunction\n"));
+                format!("function {name}")
+            }
             (2, Some(c)) => self.call(c),
             (3, _) => self.value(&p.value, ty),
             _ => p.value.clone(),
@@ -369,7 +431,15 @@ impl Compiler<'_> {
     fn statement(&mut self, e: &Eca, indent: usize, out: &mut String) {
         let pad = "    ".repeat(indent);
         let block = |e: &Eca, g: u32| -> Vec<Eca> { e.children.iter().filter(|c| c.group.unwrap_or(0) == g).cloned().collect() };
+        // What making the arguments adds (the functions of a filter or an
+        // action given as `code`), dropped where the arguments are made
+        // otherwise.
+        let mark = (self.filters.borrow().len(), self.late_globals.borrow().len());
         let a = self.args(2, &e.name, &e.params);
+        if matches!(e.name.as_str(), "SetVariable" | "IfThenElse" | "ForLoopA" | "ForLoopB" | "ForLoopVar" | "WaitForCondition") {
+            self.filters.borrow_mut().truncate(mark.0);
+            self.late_globals.borrow_mut().truncate(mark.1);
+        }
         match (e.name.as_str(), a.as_slice()) {
             ("SetVariable", [var, _]) => {
                 let ty = e.params.first().map_or(String::new(), |p| self.var_type(&p.value));
@@ -388,7 +458,7 @@ impl Compiler<'_> {
                 let _ = writeln!(out, "{pad}endif");
             }
             ("IfThenElse", _) => {
-                let cond = e.params.first().map_or("true".into(), |p| self.expr(p, "boolexpr"));
+                let cond = e.params.first().map_or("true".into(), |p| self.expr(p, "boolean"));
                 let _ = writeln!(out, "{pad}if ( {cond} ) then");
                 self.inline_action(e.params.get(1), indent + 1, out);
                 let _ = writeln!(out, "{pad}else");
@@ -490,7 +560,9 @@ impl Compiler<'_> {
                 }
             },
             // World Editor's: a loop that waits until the condition holds.
-            ("WaitForCondition", [cond, interval]) => {
+            ("WaitForCondition", [_, interval]) => {
+                // Its condition waited on: a boolean, not a filter.
+                let cond = e.params.first().map_or("true".into(), |p| self.expr(p, "boolean"));
                 let _ = writeln!(out, "{pad}loop\n{pad}    exitwhen {cond}\n{pad}    TriggerSleepAction(RMaxBJ(bj_WAIT_FOR_COND_MIN_INTERVAL, {interval}))\n{pad}endloop");
             }
             ("ReturnAction" | "SkipRemainingActions", _) => {
@@ -547,7 +619,8 @@ impl Compiler<'_> {
         }
         // As World Editor builds them: a comment isn't a trigger; a
         // disabled one's global is declared (null), its functions aren't
-        // there; custom text is its code in war3map.wct.
+        // there; custom text is its code in war3map.wct, its global
+        // declared and its `InitTrig_<name>` called.
         let note = if t.is_comment != 0 {
             Some("A comment, not a trigger: nothing of it is in the map's script.".to_string())
         } else if t.enabled == 0 {
@@ -561,6 +634,10 @@ impl Compiler<'_> {
             let _ = writeln!(out, "//\n// {note}\n{rule}");
             if t.enabled == 0 && t.is_comment == 0 {
                 let _ = writeln!(out, "trigger {trig} = null");
+            } else if t.is_custom != 0 && t.is_comment == 0 {
+                // Its code (war3map.wct) makes it: World Editor's
+                // `InitCustomTriggers` calls its `InitTrig_<name>`.
+                let _ = writeln!(out, "trigger {trig} = null\n\nfunction main\n    InitTrig_{id}()\nendfunction");
             }
             return out;
         }

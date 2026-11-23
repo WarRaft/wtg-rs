@@ -7,6 +7,8 @@ integer=0,1,1,WESTRING_TRIGTYPE_integer
 unitcode=0,1,1,WESTRING_TRIGTYPE_unitcode,integer
 string=0,1,1,WESTRING_TRIGTYPE_string
 group=0,1,0,WESTRING_TRIGTYPE_group
+boolexpr=0,0,0,WESTRING_TRIGTYPE_boolexpr
+code=0,0,0,WESTRING_TRIGTYPE_code
 [TriggerTypeDefaults]
 integer=0
 group=CreateGroup(),WESTRING_TRIGDEFAULT_GROUP
@@ -35,12 +37,14 @@ RemoveItem=0,item
 SetHeroLevel=0,unit,integer,onoff
 _SetHeroLevel_ScriptName=SetHeroLevelBJ
 CustomScriptCode=1,scriptcode
+EnumItemsInRectBJ=0,rect,code
 [TriggerCalls]
 GetPlayersAll=0,0,force
 GetEnumUnit=0,0,unit
 GetEnumItem=0,0,item
 GetTriggerUnit=0,0,unit
 GetUnitsInRectAll=0,0,group,rect
+GetUnitsInRectMatching=0,0,group,rect,boolexpr
 GetPlayableMapRect=0,1,rect
 OperatorInt=0,1,integer,integer,ArithmeticOperator,integer
 "#;
@@ -238,10 +242,15 @@ fn variables_as_world_editor_initializes_them() {
             (s("string"), s("udg_s"), None, Some("\"\""), Some(s("\"hi\""))),
             (s("integer"), s("udg_a"), Some(3), None, Some(s("7"))),
             (s("string"), s("udg_e"), None, Some("\"\""), Some(s("\"\""))),
-            (s("trigger"), s("udg_t"), Some(1), None, Some(s("CreateTrigger()"))),
+            // The game's editor makes no trigger.
+            (s("trigger"), s("udg_t"), Some(1), None, None),
             (s("player"), s("udg_p"), None, Some("null"), Some(s("Player(0)"))),
         ]
     );
+    // An editor whose data makes one (CruiserCommand's).
+    let ui = Ui::parse(&format!("{data}[TriggerTypeDefaults]\ntrigger=CreateTrigger()\n"), "", &|k| k.to_string());
+    let t = p.variables.iter().find(|d| d.variable.name == "t").unwrap();
+    assert_eq!(map_variable(t, &ui).value.as_deref(), Some("CreateTrigger()"));
 }
 
 #[test]
@@ -256,4 +265,36 @@ fn triggers_run_at_initialization() {
         t("[trigger]\nname=\"Other\"\nevent=TriggerRegisterAnyUnitEventBJ(PlayerUnitEventDies)\n"),
     ];
     assert_eq!(initialization_triggers(&all), ["gg_trg_Init_A", "gg_trg_Code"]);
+}
+
+#[test]
+fn custom_text_is_made_by_its_code() {
+    let out = compiled("[trigger]\nname=\"Item Pickup\"\ncustom_text=1\n", &[]);
+    assert!(out.contains("trigger gg_trg_Item_Pickup = null\n\nfunction main\n    InitTrig_Item_Pickup()\nendfunction"), "{out}");
+    // Off: declared only.
+    let out = compiled("[trigger]\nname=\"Off\"\ncustom_text=1\nenabled=0\n", &[]);
+    assert!(out.contains("trigger gg_trg_Off = null") && !out.contains("InitTrig_Off"), "{out}");
+}
+
+#[test]
+fn a_condition_given_as_a_filter_is_a_function() {
+    let out = compiled(
+        "[variable]\nname=\"g\"\ntype=\"group\"\nsize=1\n\n[trigger]\nname=\"Pick\"\naction=SetVariable($g, GetUnitsInRectMatching(GetPlayableMapRect(), condition:OperatorCompareInteger(\"1\", OperatorEqual, \"2\")))\n",
+        &[],
+    );
+    assert!(out.contains("function Trig_Pick_Filter1 returns boolean\n    return ( 1 == 2 )\nendfunction"), "{out}");
+    assert!(out.contains("udg_g = GetUnitsInRectMatching(GetPlayableMapRect(), Condition(function Trig_Pick_Filter1))"), "{out}");
+}
+
+#[test]
+fn an_action_given_as_code_is_a_function() {
+    let out = compiled("[trigger]\nname=\"Sweep\"\naction=EnumItemsInRectBJ(GetPlayableMapRect(), action:RemoveItem(GetEnumItem()))\n", &[]);
+    assert!(out.contains("function Trig_Sweep_Action1\n    RemoveItem(GetEnumItem())\nendfunction"), "{out}");
+    assert!(out.contains("EnumItemsInRectBJ(GetPlayableMapRect(), function Trig_Sweep_Action1)"), "{out}");
+}
+
+#[test]
+fn an_action_given_as_code_is_made_as_actions_are() {
+    let out = compiled("[variable]\nname=\"n\"\ntype=\"integer\"\nsize=1\n\n[trigger]\nname=\"Count\"\naction=EnumItemsInRectBJ(GetPlayableMapRect(), action:SetVariable($n, OperatorInt($n, OperatorAdd, \"1\")))\n", &[]);
+    assert!(out.contains("function Trig_Count_Action1\n    udg_n = ( udg_n + 1 )\nendfunction"), "{out}");
 }
