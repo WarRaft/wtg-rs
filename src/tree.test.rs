@@ -92,3 +92,15 @@ fn the_text_of_a_tree_and_back() {
     let crate::File::Tree(joined) = p.to_file().unwrap() else { panic!() };
     assert!(matches!(joined.elements.last(), Some(Element::Trigger { kind: 8, id: 0x0300_0001, parent: 0x0200_0000, .. })), "{:?}", joined.elements.last());
 }
+
+#[test]
+fn a_trigger_removed_from_both() {
+    let (mut file, mut x) = split(&tree()).unwrap();
+    file.triggers.remove(0);
+    x.remove_trigger(0);
+    let joined = join(&file, &x);
+    // The comment kept, its id as it was; the order without the trigger.
+    assert_eq!(joined.elements.len(), 3);
+    assert!(matches!(joined.elements[2], Element::Trigger { kind: 16, id: 0x0400_0000, .. }), "{:?}", joined.elements);
+    assert_eq!(joined.counts[1].0, 0);
+}

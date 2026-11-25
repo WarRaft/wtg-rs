@@ -44,6 +44,22 @@ pub struct TreeExtra {
     pub order: Vec<(Kind, usize)>,
 }
 
+impl TreeExtra {
+    /// The `k`th trigger taken out of the `Triggers` (as `Vec::remove`):
+    /// out of this too, so the rest stay parallel to them.
+    pub fn remove_trigger(&mut self, k: usize) {
+        if k < self.triggers.len() {
+            self.triggers.remove(k);
+        }
+        self.order.retain(|&(kind, i)| !(kind == Kind::Trigger && i == k));
+        for (kind, i) in &mut self.order {
+            if *kind == Kind::Trigger && *i > k {
+                *i -= 1;
+            }
+        }
+    }
+}
+
 /// The tree's first element, the map (type 1).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MapElement {
