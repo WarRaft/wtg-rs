@@ -21,6 +21,7 @@
 //! back. The format is described in the README.
 
 pub mod text;
+pub mod tree;
 pub mod ui;
 pub mod jass;
 

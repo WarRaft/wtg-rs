@@ -180,6 +180,183 @@ pub fn to_text(f: &Triggers) -> Result<String, String> {
     Ok(out)
 }
 
+/// The text form of a 1.31 file (`tree`, as [`crate::tree::split`] makes
+/// it): the classic form's sections, in the tree's order, and what the
+/// tree adds. In `[wtg]`: `tree=1`, the map's element (`map=` its name,
+/// `map_element=` its numbers), and where they aren't World Editor's
+/// usual, `tree_a=`, `counts=`, `deleted_category=` (`_trigger`,
+/// `_comment`, `_script`, `_variable`), `tree_b=`, `elements_past=`. A
+/// category's `open=` (open in the editor) and `parent=` (its parent's id,
+/// when it isn't the map); a variable's `id=` and `parent=`; a trigger's
+/// `id=` and its `category=` its parent's id (`element=` when its type
+/// isn't what its flags say). Fails as [`to_text`] does, or when
+/// [`crate::tree::split`] does.
+pub fn to_text_tree(tree: &crate::Tree) -> Result<String, String> {
+    use crate::tree::{Kind, split, trigger_kind};
+    let (f, x) = split(tree)?;
+    let v7 = f.version == 7;
+    let list = |v: &[u32]| v.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+    let mut out = format!("[{HEADER}]\nversion={}\ngame={}\ntree=1\n", f.version, f.game);
+    out += &format!("map={}\nmap_element={},{},{}\n", jass_string(&x.map.name), list(&x.map.unknown_c), list(&x.map.unknown_d), x.map.unknown_e);
+    if x.unknown_a != [1, 0, 0, 0] {
+        out += &format!("tree_a={}\n", list(&x.unknown_a));
+    }
+    let counts: Vec<u32> = x.counts.iter().map(|c| c.0).collect();
+    if counts != x.numbers {
+        out += &format!("counts={}\n", list(&counts));
+    }
+    for (word, (_, deleted)) in DELETED.iter().zip(&x.counts) {
+        if !deleted.is_empty() {
+            out += &format!("deleted_{word}={}\n", list(deleted));
+        }
+    }
+    if x.unknown_b != [0, 0] {
+        out += &format!("tree_b={}\n", list(&x.unknown_b));
+    }
+    if x.element_count_past != 0 {
+        out += &format!("elements_past={}\n", x.element_count_past);
+    }
+    let top = x.map.id();
+    for &(kind, k) in &x.order {
+        out += "\n";
+        match kind {
+            Kind::Category => {
+                let c = &f.categories[k];
+                let (open, parent) = x.categories[k].expect("read");
+                out += &format!("[category]\nindex={}\nname={}\n", c.index, jass_string(&c.name));
+                if c.is_comment != 0 {
+                    out += &format!("comment={}\n", c.is_comment);
+                }
+                if open != 0 {
+                    out += &format!("open={open}\n");
+                }
+                if parent != top {
+                    out += &format!("parent={parent}\n");
+                }
+            }
+            Kind::Variable => {
+                let (id, parent) = x.variables[k].expect("read");
+                variable_text(&mut out, &f.variables[k], v7, Scope::Global)?;
+                out += &format!("id={id}\n");
+                if parent != top {
+                    out += &format!("parent={parent}\n");
+                }
+            }
+            Kind::Trigger => {
+                let t = &f.triggers[k];
+                let (id, element) = x.triggers[k].expect("read");
+                out += &format!("[{TRIGGER}]\nname={}\ndescription={}\ncategory={}\nid={id}\n", jass_string(&t.name), jass_string(&t.description), t.category);
+                if element != trigger_kind(t) {
+                    out += &format!("element={element}\n");
+                }
+                trigger_body(&mut out, t)?;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The text form of either layout: [`to_text`] or [`to_text_tree`].
+pub fn to_text_any(file: &crate::File) -> Result<String, String> {
+    match file {
+        crate::File::Classic(f) => to_text(f),
+        crate::File::Tree(t) => to_text_tree(t),
+    }
+}
+
+impl Parsed {
+    /// The file the text says, of its layout: a 1.31 one's tree joined
+    /// ([`crate::tree::join`]); `None` when it has errors.
+    pub fn to_file(&self) -> Option<crate::File> {
+        let f = self.file.as_ref()?;
+        Some(match &self.tree {
+            Some(x) => crate::File::Tree(Box::new(crate::tree::join(f, x))),
+            None => crate::File::Classic(f.clone()),
+        })
+    }
+}
+
+/// The deleted lists' keys, in the file's order (`deleted_<word>`).
+const DELETED: [&str; 5] = ["category", "trigger", "comment", "script", "variable"];
+
+/// What a 1.31 file's text has beyond the classic form's
+/// ([`to_text_tree`]), read from `doc` (its sections in order): `None`
+/// without `tree=1`. `file` is what the classic reader made of it.
+fn tree_extra(doc: &Document, file: &Triggers, errors: &mut Vec<ParseError>) -> Option<crate::tree::TreeExtra> {
+    use crate::tree::{Kind, MapElement, TreeExtra};
+    fn value<'s>(s: &'s bni_rs::ast::Section, key: &str) -> Option<(String, &'s bni_rs::ast::Item)> {
+        s.items.iter().find(|i| i.key.as_ref().is_some_and(|k| k.text.trim() == key)).map(|i| (i.value_text().trim().to_string(), i))
+    }
+    let head = doc.sections.first().filter(|h| h.name.text == HEADER)?;
+    if value(head, "tree").is_none_or(|(v, _)| v != "1") {
+        return None;
+    }
+    let mut bad = |item: &bni_rs::ast::Item, what: &str| errors.push(error(item_span(item), format!("`{what}`: numbers, as the tree has them")));
+    let mut numbers = |s: &bni_rs::ast::Section, key: &str, n: usize| -> Option<Vec<u32>> {
+        let (v, item) = value(s, key)?;
+        let out: Option<Vec<u32>> = if v.is_empty() { Some(Vec::new()) } else { v.split(',').map(|p| p.trim().parse().ok()).collect() };
+        match out {
+            Some(o) if n == 0 || o.len() == n => Some(o),
+            _ => {
+                bad(item, key);
+                None
+            }
+        }
+    };
+    let mut x = TreeExtra { unknown_a: [1, 0, 0, 0], ..Default::default() };
+    if let Some(a) = numbers(head, "tree_a", 4) {
+        x.unknown_a = [a[0], a[1], a[2], a[3]];
+    }
+    if let Some(b) = numbers(head, "tree_b", 2) {
+        x.unknown_b = [b[0], b[1]];
+    }
+    let mut map = MapElement { unknown_c: [1, 0], ..Default::default() };
+    if let Some(m) = numbers(head, "map_element", 5) {
+        map = MapElement { unknown_c: [m[0], m[1]], unknown_d: [m[2], m[3]], unknown_e: m[4], name: String::new() };
+    }
+    map.name = value(head, "map").and_then(|(v, _)| read_string(&v)).unwrap_or_default();
+    x.map = map;
+    x.element_count_past = value(head, "elements_past").and_then(|(v, _)| v.parse().ok()).unwrap_or(0);
+    for (k, word) in DELETED.iter().enumerate() {
+        x.counts[k].1 = numbers(head, &format!("deleted_{word}"), 0).unwrap_or_default();
+    }
+    let counts = numbers(head, "counts", 5);
+    let top = x.map.id();
+    // Each section, in order, with its place in its list.
+    let (mut c, mut v, mut t) = (0, 0, 0);
+    for s in &doc.sections[1..] {
+        let id = numbers(s, "id", 1).map(|n| n[0]);
+        let parent = numbers(s, "parent", 1).map_or(top, |n| n[0]);
+        match s.name.text.as_str() {
+            "category" if c < file.categories.len() => {
+                let open = numbers(s, "open", 1).map_or(0, |n| n[0]);
+                x.categories.push(Some((open, parent)));
+                x.order.push((Kind::Category, c));
+                c += 1;
+            }
+            VARIABLE if v < file.variables.len() => {
+                x.variables.push(id.map(|id| (id, parent)));
+                x.order.push((Kind::Variable, v));
+                v += 1;
+            }
+            TRIGGER if t < file.triggers.len() => {
+                let element = numbers(s, "element", 1).map(|n| n[0]);
+                x.triggers.push(id.map(|id| (id, element.unwrap_or_else(|| crate::tree::trigger_kind(&file.triggers[t])))));
+                x.order.push((Kind::Trigger, t));
+                t += 1;
+            }
+            _ => {}
+        }
+    }
+    // The counts as the file has them: as they are now, unless written.
+    let of = |k: u32| file.triggers.iter().filter(|t| crate::tree::trigger_kind(t) == k).count() as u32;
+    x.numbers = [file.categories.len() as u32, of(8), of(16), of(32), file.variables.len() as u32];
+    for (k, n) in counts.unwrap_or_else(|| x.numbers.to_vec()).into_iter().enumerate() {
+        x.counts[k].0 = n;
+    }
+    Some(x)
+}
+
 // ---------------------------------------------------------------- one at a time
 
 /// A parameter as the text writes it (`Player00`, `$hero["1"]`,
@@ -384,6 +561,9 @@ pub fn is_trigger_text(doc: &Document) -> bool {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parsed {
     pub file: Option<Triggers>,
+    /// A 1.31 file's text (`tree=1`): what its tree has beyond `file`
+    /// ([`crate::tree::join`] makes the tree of them).
+    pub tree: Option<crate::tree::TreeExtra>,
     pub errors: Vec<ParseError>,
     /// What to highlight: sections, keys, and in the values the calls'
     /// names, variables, strings, presets and numbers.
@@ -637,6 +817,9 @@ struct Reader<'a> {
     tokens: Vec<SemanticToken>,
     v7: bool,
     data: Option<&'a TriggerData>,
+    /// A 1.31 file's text (`tree=1`): its sections' keys of the tree
+    /// (`id`, `parent`, `open`, `element`) are [`tree_extra`]'s.
+    tree: bool,
 }
 
 impl<'a> Reader<'a> {
@@ -789,7 +972,7 @@ pub fn encoded_semantic_tokens(src: &str) -> Vec<u32> {
 
 /// [`from_text`] of a document already parsed from `text`.
 pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parsed {
-    let mut r = Reader { lines: text.lines().collect(), errors: doc.errors.clone(), tokens: Vec::new(), v7: true, data };
+    let mut r = Reader { lines: text.lines().collect(), errors: doc.errors.clone(), tokens: Vec::new(), v7: true, data, tree: false };
     for s in &doc.sections {
         let n = s.name.span;
         r.tokens.push(SemanticToken::new(n.start_line, n.start_col, n.end_col, T::Namespace, Modifiers::NONE));
@@ -803,15 +986,19 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
         r.errors.push(error(span, format!("the file starts with [{HEADER}]")));
         return finish(r, file);
     };
-    for (key, item) in r.items(head, &["version", "game"]) {
+    const HEAD: [&str; 14] = ["version", "game", "tree", "map", "map_element", "tree_a", "counts", "deleted_category", "deleted_trigger", "deleted_comment", "deleted_script", "deleted_variable", "tree_b", "elements_past"];
+    for (key, item) in r.items(head, &HEAD) {
         match key.as_str() {
+            "tree" => r.tree = item.value_text().trim() == "1",
+            // A 1.31 file's: `tree_extra`'s.
+            k if HEAD[3..].contains(&k) => {}
             "version" => match r.int::<u32>(item) {
                 Some(v @ (4 | 7)) => file.version = v,
                 Some(v) => r.err(item, format!("version {v}: 4 (Reign of Chaos) or 7 (The Frozen Throne)")),
                 None => {}
             },
             "game" => file.game = r.int(item).unwrap_or(file.game),
-            _ => r.unknown(item, &key, HEADER, &["version", "game"]),
+            _ => r.unknown(item, &key, HEADER, &HEAD),
         }
     }
     r.v7 = file.version == 7;
@@ -826,6 +1013,7 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
                         "name" => c.name = r.string(item).unwrap_or_default(),
                         "comment" if r.v7_only(item, &key) => c.is_comment = r.int(item).unwrap_or(0),
                         "comment" => {}
+                        "open" | "parent" if r.tree => {}
                         _ => r.unknown(item, &key, "category", &KEYS),
                     }
                 }
@@ -845,7 +1033,13 @@ pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parse
             )),
         }
     }
-    finish(r, file)
+    // A 1.31 file's text: its tree's too.
+    let mut errors = std::mem::take(&mut r.errors);
+    let tree = if r.tree { tree_extra(doc, &file, &mut errors) } else { None };
+    r.errors = errors;
+    let mut parsed = finish(r, file);
+    parsed.tree = tree;
+    parsed
 }
 
 /// A `[variable]` section.
@@ -920,6 +1114,7 @@ fn read_variable<'a>(r: &mut Reader<'a>, section: &'a Section, own: bool) -> Dec
                 v.has_initial = 1;
                 v.initial = r.string(item).unwrap_or_default();
             }
+            "id" | "parent" if r.tree => {}
             _ => r.unknown(item, &key, VARIABLE, &KEYS),
         }
     }
@@ -959,6 +1154,7 @@ fn read_trigger<'a>(r: &mut Reader<'a>, section: &'a Section, with_category: boo
             "custom_text" => t.is_custom = r.int(item).unwrap_or(0),
             "initially_off" => t.initially_off = r.int(item).unwrap_or(0),
             "run_on_init" => t.run_on_init = r.int(item).unwrap_or(0),
+            "id" | "element" if r.tree => {}
             _ => {
                 let Some((depth, enabled, kind, group)) = eca_key(&key) else {
                     r.err(item, format!(
@@ -1049,7 +1245,7 @@ pub struct ParsedTrigger {
 /// With `data`, checks every function against it too.
 pub fn trigger_from_text(text: &str, data: Option<&TriggerData>) -> ParsedTrigger {
     let doc = parse_bni(text);
-    let mut r = Reader { lines: text.lines().collect(), errors: doc.errors.clone(), tokens: Vec::new(), v7: true, data };
+    let mut r = Reader { lines: text.lines().collect(), errors: doc.errors.clone(), tokens: Vec::new(), v7: true, data, tree: false };
     for s in &doc.sections {
         let n = s.name.span;
         r.tokens.push(SemanticToken::new(n.start_line, n.start_col, n.end_col, T::Namespace, Modifiers::NONE));
@@ -1171,7 +1367,7 @@ fn trigger_body(out: &mut String, t: &Trigger) -> Result<(), String> {
 fn finish(mut r: Reader, file: Triggers) -> Parsed {
     r.errors.sort_by_key(|e| (e.line, e.col));
     let file = r.errors.is_empty().then_some(file);
-    Parsed { file, errors: r.errors, tokens: r.tokens }
+    Parsed { file, errors: r.errors, tokens: r.tokens, tree: None }
 }
 
 fn error(span: Span, message: impl Into<String>) -> ParseError {

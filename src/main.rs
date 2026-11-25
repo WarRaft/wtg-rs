@@ -23,14 +23,14 @@ fn run(args: &[&str]) -> Result<(), String> {
     match args {
         ["--text", d, path] => {
             let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-            let f = wtg_rs::parse(&bytes, &data(d)?).map_err(|e| format!("{path}: {e}"))?;
-            print!("{}", text::to_text(&f).map_err(|e| format!("{path}: {e}"))?);
+            let f = wtg_rs::parse_any(&bytes, &data(d)?).map_err(|e| format!("{path}: {e}"))?;
+            print!("{}", text::to_text_any(&f).map_err(|e| format!("{path}: {e}"))?);
             Ok(())
         }
         ["--from-text", d, input, output] => {
             let src = std::fs::read_to_string(input).map_err(|e| format!("{input}: {e}"))?;
             let p = text::from_text(&src, Some(&data(d)?));
-            let Some(f) = p.file else {
+            let Some(f) = p.to_file() else {
                 let lines: Vec<String> = p.errors.iter().map(|e| format!("{input}:{}:{}: {}", e.line, e.col, e.message)).collect();
                 return Err(lines.join("\n"));
             };
