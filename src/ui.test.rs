@@ -153,6 +153,20 @@ fn a_trigger_as_the_editor_shows_it() {
 }
 
 #[test]
+fn an_objects_id_shows_as_its_name() {
+    let mut ui = Ui::parse(DATA, STRINGS, &resolve);
+    ui.objects.insert("unitcode".into(), [("hfoo".to_string(), "Footman".to_string())].into());
+    let text = "[trigger]\nname=\"Spawn\"\naction=CreateNUnitsAtLoc(\"1\", \"hfoo\", Player00, GetRectCenter(GetPlayableMapRect()), RealUnitFacing)\naction=CreateNUnitsAtLoc(\"1\", \"h000\", Player00, GetRectCenter(GetPlayableMapRect()), RealUnitFacing)\n";
+    let p = trigger_from_text(text, None);
+    let view = ui.render(p.trigger.as_ref().unwrap(), &p.lines);
+    // A number of its type is a number; an id no object has, as it is.
+    assert!(flat(&view.actions[0].text).starts_with("Unit - Create l{1} l{Footman} for "), "{}", flat(&view.actions[0].text));
+    assert!(flat(&view.actions[1].text).starts_with("Unit - Create l{1} l{h000} for "));
+    assert_eq!(ui.object_name("unitcode", "hfoo"), Some("Footman"));
+    assert_eq!(ui.object_name("integer", "hfoo"), None);
+}
+
+#[test]
 fn which_functions_have_blocks() {
     assert_eq!(blocks(2, "IfThenElseMultiple").len(), 3);
     assert_eq!(blocks(1, "AndMultiple")[0].kind, 1);

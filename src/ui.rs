@@ -16,7 +16,7 @@
 //! is text, the first parameter, text, the second. The `~Name`s stand for
 //! the parameters in order, whatever the names.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bni_rs::ast::{Field, ValueKind};
 
@@ -142,6 +142,11 @@ pub struct Ui {
     function_order: Vec<(FunctionKind, String)>,
     /// Labels by `WESTRING_` key, for the ones [`Ui::label`] gives.
     labels: HashMap<&'static str, String>,
+    /// The objects a value of a type is (`unitcode`: the units, by id
+    /// `hfoo`, with their names `Footman`), from the game's files and the
+    /// map's object data: a value shows as its object's name, and a
+    /// parameter's dialog offers them. Its user fills it.
+    pub objects: HashMap<String, BTreeMap<String, String>>,
 }
 
 /// Keys of labels the view shows, with their English.
@@ -346,6 +351,12 @@ impl Ui {
     /// `ty`'s base type, or `ty` itself.
     pub fn base<'a>(&'a self, ty: &'a str) -> &'a str {
         self.bases.get(ty).map_or(ty, String::as_str)
+    }
+
+    /// The name of object `id`, when `ty`'s values are objects
+    /// ([`Ui::objects`]) and it's one of them.
+    pub fn object_name(&self, ty: &str, id: &str) -> Option<&str> {
+        self.objects.get(ty)?.get(id).map(String::as_str)
     }
 
     /// Is a value of `ty` typed in (a number, a string, an id: its base is
@@ -560,7 +571,7 @@ impl Ui {
                 if i > 0 {
                     out.push(Span::Text(", ".into()));
                 }
-                out.push(self.param(p, &at(i), ""));
+                out.push(self.param(p, &at(i), "", ""));
             }
             out.push(fixed(")"));
             return out;
@@ -571,7 +582,7 @@ impl Ui {
             match piece {
                 Piece::Text(t) => out.push(Span::Text(t)),
                 Piece::Param(i) => match params.get(i) {
-                    Some(p) => out.push(self.param(p, &at(i), f.names.get(i).map_or("", String::as_str))),
+                    Some(p) => out.push(self.param(p, &at(i), f.names.get(i).map_or("", String::as_str), f.args.get(i).map_or("", String::as_str))),
                     None => out.push(fixed("?")),
                 },
             }
@@ -581,14 +592,14 @@ impl Ui {
         let shown = f.phrase.iter().filter(|p| matches!(p, Piece::Param(_))).count();
         for (i, p) in params.iter().enumerate().skip(shown) {
             out.push(Span::Text(", ".into()));
-            out.push(self.param(p, &at(i), ""));
+            out.push(self.param(p, &at(i), "", f.args.get(i).map_or("", String::as_str)));
         }
         out
     }
 
-    /// How a parameter at `path` shows; `name` is its name in the phrase
-    /// (`Value`), shown for an empty value, as the editor does.
-    fn param(&self, p: &Param, path: &str, name: &str) -> Span {
+    /// How a parameter at `path` of type `ty` shows; `name` is its name in
+    /// the phrase (`Value`), shown for an empty value, as the editor does.
+    fn param(&self, p: &Param, path: &str, name: &str, ty: &str) -> Span {
         let (role, mut spans) = match (p.kind, &p.call) {
             (2, Some(c)) => {
                 let fk = FunctionKind::of(c.kind).unwrap_or(FunctionKind::Call);
@@ -611,12 +622,13 @@ impl Ui {
                 let shown = if name.is_empty() { "Value" } else { name };
                 (Role::Unknown, vec![Span::Text(shown.into())])
             }
-            (3, _) => (Role::Value, vec![Span::Text(p.value.clone())]),
+            // An object's id: its name.
+            (3, _) => (Role::Value, vec![Span::Text(self.object_name(ty, &p.value).unwrap_or(&p.value).to_string())]),
             _ => (Role::Unknown, vec![Span::Text(p.value.clone())]),
         };
         if let Some(i) = &p.index {
             spans.push(Span::Text("[".into()));
-            spans.push(self.param(i, &format!("{path}.i"), "Index"));
+            spans.push(self.param(i, &format!("{path}.i"), "Index", "integer"));
             spans.push(Span::Text("]".into()));
         }
         Span::Value { role, path: path.to_string(), spans }
