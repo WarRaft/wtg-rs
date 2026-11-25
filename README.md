@@ -116,9 +116,14 @@ name and parameter count is checked against it.
 
 A trigger file of its own is a source of its own, not a form of
 `war3map.wtg`: `to_files` goes from a whole file to such files, and
-nothing goes back. The [wc3-rs](../wc3-rs/README.md) editor builds a
-map's script from them, so their format can grow past what
-`war3map.wtg` holds.
+`from_files` back, for what `war3map.wtg` holds. The
+[wc3-rs](../wc3-rs/README.md) editor builds a map's script from them, so
+their format can grow past what `war3map.wtg` holds; `from_files` says
+what (a variable private or local to its file, a trigger outside a
+category's folder, a folder in a folder ...), each with its file. Its
+categories are the folders (empty ones too, given apart), named as them
+without their number, numbered from 0 in their order: World Editor's own
+numbers aren't in the files.
 
 `text::trigger_from_text` and `text::trigger_to_text`: one trigger as a
 file (`.trg` in the [wc3-rs](../wc3-rs) editor), a `[trigger]` section

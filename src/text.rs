@@ -299,14 +299,27 @@ pub fn to_files(f: &Triggers) -> Result<Files, String> {
 /// error, its file named: a variable private or local to a file, a trigger
 /// outside a category's folder, a folder in a folder, a `.trg` that isn't
 /// a trigger, two variables of a name. `data` checks the functions, as
-/// [`trigger_from_text`] does.
-pub fn from_files(files: &[(String, String)], data: Option<&TriggerData>) -> Result<Triggers, Vec<String>> {
+/// [`trigger_from_text`] does. `folders` (as [`Files::folders`]) are the
+/// categories' folders, empty ones too: a category with no trigger is one.
+pub fn from_files(folders: &[String], files: &[(String, String)], data: Option<&TriggerData>) -> Result<Triggers, Vec<String>> {
     let mut sorted: Vec<&(String, String)> = files.iter().filter(|(p, _)| p.ends_with(".trg")).collect();
     // The map's variables first, as they're at the top.
     sorted.sort_by(|a, b| (a.0 != VARIABLES_FILE, &a.0).cmp(&(b.0 != VARIABLES_FILE, &b.0)));
     let mut out = Triggers { version: 7, categories: Vec::new(), game: 2, variables: Vec::new(), triggers: Vec::new() };
     let mut errors = Vec::new();
-    let mut folders: Vec<String> = Vec::new();
+    // Every folder a category, in the order of their names.
+    let mut all: Vec<&str> = folders.iter().map(String::as_str).chain(sorted.iter().filter_map(|(p, _)| p.split_once('/').map(|(f, _)| f))).collect();
+    all.sort();
+    all.dedup();
+    let folders: Vec<String> = all.iter().map(|f| f.to_string()).collect();
+    for (k, folder) in folders.iter().enumerate() {
+        // Its name: the folder's, its number left out.
+        let name = match folder.split_once('_') {
+            Some((n, rest)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => rest,
+            _ => folder,
+        };
+        out.categories.push(Category { index: k as i32, name: name.to_string(), is_comment: 0 });
+    }
     for (path, text) in sorted {
         let parsed = trigger_from_text(text, data);
         for e in &parsed.errors {
@@ -343,19 +356,7 @@ pub fn from_files(files: &[(String, String)], data: Option<&TriggerData>) -> Res
                 continue;
             }
         };
-        let k = match folders.iter().position(|f| f == folder) {
-            Some(k) => k,
-            None => {
-                folders.push(folder.to_string());
-                // Its name: the folder's, its number left out.
-                let name = match folder.split_once('_') {
-                    Some((n, rest)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => rest,
-                    _ => folder,
-                };
-                out.categories.push(Category { index: folders.len() as i32 - 1, name: name.to_string(), is_comment: 0 });
-                folders.len() - 1
-            }
-        };
+        let k = folders.iter().position(|f| f == folder).expect("every folder is listed");
         t.category = k as i32;
         out.triggers.push(t);
     }

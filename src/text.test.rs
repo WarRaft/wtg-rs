@@ -222,16 +222,18 @@ fn private_and_local_variables() {
 fn files_back_into_triggers() {
     let mut f = sample();
     f.categories.push(Category { index: 5, name: "Later".into(), is_comment: 0 });
+    // An empty category: a folder of no file.
+    f.categories.push(Category { index: 6, name: "Empty".into(), is_comment: 0 });
     let mut t = f.triggers[0].clone();
     t.category = 5;
     t.name = "Second".into();
     f.triggers.push(t);
     let made = to_files(&f).unwrap();
-    let back = from_files(&made.files, None).unwrap();
+    let back = from_files(&made.folders, &made.files, None).unwrap();
     // The same triggers and variables; categories numbered as their folders.
     assert_eq!(back.variables, f.variables);
-    assert_eq!(back.triggers.iter().map(|t| (t.name.as_str(), t.category)).collect::<Vec<_>>(), [(f.triggers[0].name.as_str(), 0), ("Second", 1)]);
-    assert_eq!(back.categories.iter().map(|c| (c.index, c.name.as_str())).collect::<Vec<_>>(), [(0, "Init"), (1, "Later")]);
+    assert_eq!(back.triggers.iter().map(|t| (t.name.as_str(), t.category)).collect::<Vec<_>>(), [(f.triggers[0].name.as_str(), 0), ("Second", 2)]);
+    assert_eq!(back.categories.iter().map(|c| (c.index, c.name.as_str())).collect::<Vec<_>>(), [(0, "Init"), (1, "--"), (2, "Later"), (3, "Empty")]);
     let mut first = back.triggers[0].clone();
     first.category = f.triggers[0].category;
     assert_eq!(first, f.triggers[0]);
@@ -246,7 +248,7 @@ fn files_back_into_triggers() {
         ("Top.trg".to_string(), "[trigger]\nname=\"Top\"\n".to_string()),
         ("000_Init/Deep/X.trg".to_string(), "[trigger]\nname=\"X\"\n".to_string()),
     ];
-    let e = from_files(&files, None).unwrap_err();
+    let e = from_files(&[], &files, None).unwrap_err();
     assert!(e.iter().any(|m| m.starts_with("000_Init/000_T.trg: the variable p is private")), "{e:?}");
     assert!(e.iter().any(|m| m.starts_with("000_Init/001_U.trg: the variable a again")), "{e:?}");
     assert!(e.iter().any(|m| m.starts_with("Top.trg: a trigger outside a category's folder")), "{e:?}");
