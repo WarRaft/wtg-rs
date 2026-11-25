@@ -217,3 +217,38 @@ fn private_and_local_variables() {
     let e = from_text("[wtg]\n[variable]\nname=\"l\"\ntype=\"integer\"\nscope=private\n", None).errors;
     assert!(e[0].message.contains("`scope` is a trigger file's own"), "{e:?}");
 }
+
+#[test]
+fn files_back_into_triggers() {
+    let mut f = sample();
+    f.categories.push(Category { index: 5, name: "Later".into(), is_comment: 0 });
+    let mut t = f.triggers[0].clone();
+    t.category = 5;
+    t.name = "Second".into();
+    f.triggers.push(t);
+    let made = to_files(&f).unwrap();
+    let back = from_files(&made.files, None).unwrap();
+    // The same triggers and variables; categories numbered as their folders.
+    assert_eq!(back.variables, f.variables);
+    assert_eq!(back.triggers.iter().map(|t| (t.name.as_str(), t.category)).collect::<Vec<_>>(), [(f.triggers[0].name.as_str(), 0), ("Second", 1)]);
+    assert_eq!(back.categories.iter().map(|c| (c.index, c.name.as_str())).collect::<Vec<_>>(), [(0, "Init"), (1, "Later")]);
+    let mut first = back.triggers[0].clone();
+    first.category = f.triggers[0].category;
+    assert_eq!(first, f.triggers[0]);
+    // To World Editor's binary and back.
+    assert!(back.to_bytes().is_ok());
+
+    // What World Editor can't hold: each said, its file named.
+    let files = vec![
+        ("_variables.trg".to_string(), "[variable]\nname=\"a\"\ntype=\"integer\"\n".to_string()),
+        ("000_Init/000_T.trg".to_string(), "[variable]\nname=\"p\"\ntype=\"unit\"\nscope=private\n\n[trigger]\nname=\"T\"\n".to_string()),
+        ("000_Init/001_U.trg".to_string(), "[variable]\nname=\"a\"\ntype=\"integer\"\n\n[trigger]\nname=\"U\"\n".to_string()),
+        ("Top.trg".to_string(), "[trigger]\nname=\"Top\"\n".to_string()),
+        ("000_Init/Deep/X.trg".to_string(), "[trigger]\nname=\"X\"\n".to_string()),
+    ];
+    let e = from_files(&files, None).unwrap_err();
+    assert!(e.iter().any(|m| m.starts_with("000_Init/000_T.trg: the variable p is private")), "{e:?}");
+    assert!(e.iter().any(|m| m.starts_with("000_Init/001_U.trg: the variable a again")), "{e:?}");
+    assert!(e.iter().any(|m| m.starts_with("Top.trg: a trigger outside a category's folder")), "{e:?}");
+    assert!(e.iter().any(|m| m.starts_with("000_Init/Deep/X.trg: a folder in a folder")), "{e:?}");
+}

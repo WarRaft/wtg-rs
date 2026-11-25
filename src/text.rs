@@ -291,6 +291,77 @@ pub fn to_files(f: &Triggers) -> Result<Files, String> {
     Ok(Files { folders, files: out })
 }
 
+/// The triggers of files as [`to_files`] makes them, back: what World
+/// Editor's `war3map.wtg` holds (The Frozen Throne's). Read in the order of
+/// their paths (their numbers): [`VARIABLES_FILE`] the map's variables, each
+/// folder a category (named as the folder, its `000_` left out), each
+/// `.trg` in it a trigger of it. What World Editor's file can't hold is an
+/// error, its file named: a variable private or local to a file, a trigger
+/// outside a category's folder, a folder in a folder, a `.trg` that isn't
+/// a trigger, two variables of a name. `data` checks the functions, as
+/// [`trigger_from_text`] does.
+pub fn from_files(files: &[(String, String)], data: Option<&TriggerData>) -> Result<Triggers, Vec<String>> {
+    let mut sorted: Vec<&(String, String)> = files.iter().filter(|(p, _)| p.ends_with(".trg")).collect();
+    // The map's variables first, as they're at the top.
+    sorted.sort_by(|a, b| (a.0 != VARIABLES_FILE, &a.0).cmp(&(b.0 != VARIABLES_FILE, &b.0)));
+    let mut out = Triggers { version: 7, categories: Vec::new(), game: 2, variables: Vec::new(), triggers: Vec::new() };
+    let mut errors = Vec::new();
+    let mut folders: Vec<String> = Vec::new();
+    for (path, text) in sorted {
+        let parsed = trigger_from_text(text, data);
+        for e in &parsed.errors {
+            errors.push(format!("{path}:{}: {}", e.line, e.message));
+        }
+        for d in &parsed.variables {
+            match d.scope {
+                Scope::Global if out.variables.iter().any(|v| v.name == d.variable.name) => errors.push(format!("{path}: the variable {} again: World Editor's are one list", d.variable.name)),
+                Scope::Global => out.variables.push(d.variable.clone()),
+                _ => errors.push(format!("{path}: the variable {} is {} to its file: World Editor's are all the map's", d.variable.name, if d.scope == Scope::Private { "private" } else { "local" })),
+            }
+        }
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.last() == Some(&VARIABLES_FILE) && parts.len() == 1 {
+            if parsed.trigger.is_some() {
+                errors.push(format!("{path}: a trigger in the map's variables' file"));
+            }
+            continue;
+        }
+        let Some(mut t) = parsed.trigger else {
+            if parsed.errors.is_empty() {
+                errors.push(format!("{path}: no [trigger]: World Editor's variables are in {VARIABLES_FILE}"));
+            }
+            continue;
+        };
+        let folder = match parts.as_slice() {
+            [folder, _] => *folder,
+            [_] => {
+                errors.push(format!("{path}: a trigger outside a category's folder: World Editor's are each in a category"));
+                continue;
+            }
+            _ => {
+                errors.push(format!("{path}: a folder in a folder: World Editor's categories hold triggers only"));
+                continue;
+            }
+        };
+        let k = match folders.iter().position(|f| f == folder) {
+            Some(k) => k,
+            None => {
+                folders.push(folder.to_string());
+                // Its name: the folder's, its number left out.
+                let name = match folder.split_once('_') {
+                    Some((n, rest)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => rest,
+                    _ => folder,
+                };
+                out.categories.push(Category { index: folders.len() as i32 - 1, name: name.to_string(), is_comment: 0 });
+                folders.len() - 1
+            }
+        };
+        t.category = k as i32;
+        out.triggers.push(t);
+    }
+    if errors.is_empty() { Ok(out) } else { Err(errors) }
+}
+
 /// What [`to_files`] makes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Files {
