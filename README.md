@@ -57,9 +57,23 @@ two u32, the map's file name, two u32, (7) one more u32; then each
 element: u32 type (4 category: id, name, (7) is a comment, has children,
 parent; 8, 16, 32 a trigger, comment or script: a trigger as above with
 its id after the comment flag and its parent in place of the category;
-64 a variable: id, name, parent). No map at hand is that new: the layout
-follows one description of it and is checked by tests only. It has no
-text form yet.
+64 a variable: id, name, parent). No map at hand is that new (Reforged
+keeps its maps in CASC): the layout is checked against HiveWE's reader
+and by tests. An id has its type in its high byte (a category's 0x02, a
+trigger's 0x03, a comment's 0x04, a variable's 0x0C ...).
+
+`tree::split` makes a tree a classic file (`Triggers`) and what it has
+beyond (`TreeExtra`: the ids, the parents, the elements' order, the
+header's numbers), and `tree::join` makes it again, the same bytes when
+nothing changed: so everything made for the classic layout (the text,
+an editor's operations, the build, `.trg` files) works on 1.31's too. In
+the `Triggers` a category's `index` is its id and a trigger's `category`
+its parent's id (the map's, 0, at the top); the `TreeExtra` runs
+parallel to its lists (`None`: new). Something new gets the next id of
+its type and goes where it is in the text (else at the end); a count of
+the header changes by as many as were added or deleted. Nested
+categories show as a flat list (each its `parent=`), their triggers in
+them as before.
 
 ## Text
 
@@ -108,6 +122,17 @@ action=IfThenElseMultiple()
 - Flags only when they aren't the default (`enabled=1`; `comment`,
   `custom_text`, `initially_off`, `run_on_init` 0), a variable's
   `unknown` only when it isn't 1.
+
+1.31's file (`text::to_text_any`, `to_text_tree`) is the same text
+with what the tree adds: `[wtg]` has `tree=1`, `map=` (the map's
+element's name), `map_element=` and, when not all zero, the header's
+numbers (`tree_a=`, `counts=`, `deleted_<kind>=`, `tree_b=`,
+`elements_past=`); the sections are in the tree's order (variables
+among the categories and triggers); a category has `open=` and
+`parent=`, a variable `id=` and `parent=`, a trigger `id=` (and
+`element=` when its type isn't what its flags say). A section without
+`id=` is new. `from_text` reads them (`Parsed::tree`), `Parsed::to_file`
+gives either layout.
 
 Reading the text needs no `TriggerData.txt`; given one, every function's
 name and parameter count is checked against it.
