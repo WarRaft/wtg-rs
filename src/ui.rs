@@ -566,12 +566,14 @@ impl Ui {
         let at = |i: usize| if base.is_empty() { i.to_string() } else { format!("{base}.{i}") };
         let fixed = |t: &str| Span::Value { role: Role::Unknown, path: String::new(), spans: vec![Span::Text(t.into())] };
         let Some(f) = f.filter(|f| !f.phrase.is_empty() || !f.title.is_empty()) else {
+            // As a call; a function the data has without its strings still
+            // gives its parameters' types (an object's id shown by name).
             let mut out = vec![fixed(&format!("{name}("))];
             for (i, p) in params.iter().enumerate() {
                 if i > 0 {
                     out.push(Span::Text(", ".into()));
                 }
-                out.push(self.param(p, &at(i), "", ""));
+                out.push(self.param(p, &at(i), "", f.and_then(|f| f.args.get(i)).map_or("", String::as_str)));
             }
             out.push(fixed(")"));
             return out;
