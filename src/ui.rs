@@ -241,6 +241,26 @@ impl Ui {
                             }
                             continue;
                         }
+                        // Reforged's data has a function's words too, its
+                        // strings' file then only its hints: its title
+                        // (`_Name_DisplayName`), its phrase
+                        // (`_Name_Parameters`). The strings' file's own,
+                        // where it has them, over these.
+                        if let Some(function) = key.strip_prefix('_').and_then(|k| k.strip_suffix("_DisplayName")) {
+                            let entry = ui.functions.entry((kind, function.to_string())).or_default();
+                            if entry.title.is_empty() {
+                                entry.title = item.value_text();
+                            }
+                            continue;
+                        }
+                        if let Some(function) = key.strip_prefix('_').and_then(|k| k.strip_suffix("_Parameters")) {
+                            let entry = ui.functions.entry((kind, function.to_string())).or_default();
+                            if entry.phrase.is_empty() {
+                                entry.phrase = phrase(&item.fields);
+                                entry.names = item.fields.iter().filter_map(|f| f.text().trim().strip_prefix('~').map(str::to_string)).collect();
+                            }
+                            continue;
+                        }
                         if key.starts_with('_') {
                             continue;
                         }
@@ -274,8 +294,10 @@ impl Ui {
             let mut seen: HashMap<String, usize> = HashMap::new();
             for item in &section.items {
                 let Some(key) = item.key.as_ref().map(|k| k.text.trim()) else { continue };
+                // A hint: of a function this file has named, or (Reforged's,
+                // which names none) of one the data has.
                 if let Some(function) = key.strip_suffix("Hint")
-                    && seen.contains_key(function)
+                    && (seen.contains_key(function) || ui.function_order.iter().any(|(k, n)| *k == kind && n == function))
                 {
                     if let Some(entry) = ui.functions.get_mut(&(kind, function.to_string())) {
                         entry.hint = item.value_text();

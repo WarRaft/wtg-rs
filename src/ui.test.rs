@@ -223,3 +223,17 @@ fn choices_and_defaults() {
     assert!(paths.contains(&("3.0".to_string(), "(Playable map area)".to_string())), "{paths:?}");
     assert!(paths.contains(&("4.i".to_string(), "1".to_string())), "{paths:?}");
 }
+
+#[test]
+fn reforgeds_words_in_its_data() {
+    // 2.0's TriggerData.txt has a function's title and phrase; its
+    // TriggerStrings.txt only its hint.
+    let data = "[TriggerActions]\nCreateNUnitsAtLoc=0,integer,unitcode,player,location,real\n_CreateNUnitsAtLoc_DisplayName=\"Create Units Facing Angle\"\n_CreateNUnitsAtLoc_Parameters=\"Create \",~Number,\" \",~Unit,\" for \",~Player,\" at \",~Point,\" facing \",~Direction,\" degrees\"\n_CreateNUnitsAtLoc_Category=TC_UNIT\n";
+    let strings = "[TriggerActionStrings]\nCreateNUnitsAtLocHint=\"Use Last Created Unit Group.\"\n";
+    let ui = Ui::parse(data, strings, &resolve);
+    let f = ui.function(FunctionKind::Action, "CreateNUnitsAtLoc").unwrap();
+    assert_eq!(f.title, "Create Units Facing Angle");
+    assert_eq!(f.names, ["Number", "Unit", "Player", "Point", "Direction"]);
+    assert_eq!(f.hint, "Use Last Created Unit Group.");
+    assert!(ui.function(FunctionKind::Action, "CreateNUnitsAtLocHint").is_none(), "a hint is no function");
+}
