@@ -542,7 +542,7 @@ impl Compiler<'_> {
             ("CustomScriptCode", _) => {
                 // Lines of their own (`\n` in the text), each indented.
                 let code = e.params.first().map_or("", |p| p.value.as_str());
-                for line in code.lines() {
+                for line in parser_rs::lines::lines(&code) {
                     let line = self.script_line(line.trim_end());
                     if !line.is_empty() {
                         let _ = writeln!(out, "{pad}{line}");
@@ -614,7 +614,7 @@ impl Compiler<'_> {
         let mut out = String::new();
         let rule = "//===========================================================================";
         let _ = writeln!(out, "{rule}\n// Trigger: {}", if t.name.is_empty() { &id } else { &t.name });
-        for line in t.description.lines() {
+        for line in parser_rs::lines::lines(&t.description) {
             let _ = writeln!(out, "// {line}");
         }
         // As World Editor builds them: a comment isn't a trigger; a

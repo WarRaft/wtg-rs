@@ -81,7 +81,7 @@ impl TriggerData {
     pub fn parse(text: &str) -> TriggerData {
         let mut data = TriggerData::default();
         let mut section: Option<&'static str> = None;
-        for line in text.lines() {
+        for line in parser_rs::lines::lines(&text) {
             let line = line.trim_start();
             if line.is_empty() || line.starts_with("//") || line.starts_with(';') {
                 continue;

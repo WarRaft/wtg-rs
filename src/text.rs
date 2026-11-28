@@ -972,7 +972,7 @@ pub fn encoded_semantic_tokens(src: &str) -> Vec<u32> {
 
 /// [`from_text`] of a document already parsed from `text`.
 pub fn from_bni(doc: &Document, text: &str, data: Option<&TriggerData>) -> Parsed {
-    let mut r = Reader { lines: text.lines().collect(), errors: doc.errors.clone(), tokens: Vec::new(), v7: true, data, tree: false };
+    let mut r = Reader { lines: parser_rs::lines::lines(&text).collect(), errors: doc.errors.clone(), tokens: Vec::new(), v7: true, data, tree: false };
     for s in &doc.sections {
         let n = s.name.span;
         r.tokens.push(SemanticToken::new(n.start_line, n.start_col, n.end_col, T::Namespace, Modifiers::NONE));
@@ -1245,7 +1245,7 @@ pub struct ParsedTrigger {
 /// With `data`, checks every function against it too.
 pub fn trigger_from_text(text: &str, data: Option<&TriggerData>) -> ParsedTrigger {
     let doc = parse_bni(text);
-    let mut r = Reader { lines: text.lines().collect(), errors: doc.errors.clone(), tokens: Vec::new(), v7: true, data, tree: false };
+    let mut r = Reader { lines: parser_rs::lines::lines(&text).collect(), errors: doc.errors.clone(), tokens: Vec::new(), v7: true, data, tree: false };
     for s in &doc.sections {
         let n = s.name.span;
         r.tokens.push(SemanticToken::new(n.start_line, n.start_col, n.end_col, T::Namespace, Modifiers::NONE));
